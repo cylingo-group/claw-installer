@@ -28,9 +28,11 @@
 
 [CmdletBinding()]
 param(
-  [string]$Distro  = $(if ($env:INSTALLER_WSL_DISTRO) { $env:INSTALLER_WSL_DISTRO } else { 'Ubuntu' }),
-  [string]$RepoDir = $(if ($env:INSTALLER_REPO_DIR)  { $env:INSTALLER_REPO_DIR }  else { Split-Path -Parent $PSScriptRoot }),
-  [switch]$DryRun
+  [string]$Distro    = $(if ($env:INSTALLER_WSL_DISTRO) { $env:INSTALLER_WSL_DISTRO } else { 'Ubuntu' }),
+  [string]$RepoDir   = $(if ($env:INSTALLER_REPO_DIR)  { $env:INSTALLER_REPO_DIR }  else { Split-Path -Parent $PSScriptRoot }),
+  [switch]$DryRun,
+  [switch]$Preflight,  # NEW: run only preflight checks (1-3) and exit 0 if all pass
+  [switch]$Uninstall   # NEW: run uninstall.sh instead of install.sh
 )
 
 $ErrorActionPreference = 'Stop'
@@ -226,6 +228,30 @@ cd "$DestDir"
   return $LASTEXITCODE
 }
 
+# ---- 6. run uninstall.sh (mirrors Invoke-BashInstaller) -------------------
+function Invoke-BashUninstaller {
+  param([string]$Name, [string]$DestDir)
+
+  $forward = @()
+  Get-ChildItem env: | Where-Object { $_.Name -like 'INSTALLER_*' -and $_.Name -ne 'INSTALLER_REPO_DIR' -and $_.Name -ne 'INSTALLER_WSL_DISTRO' } | ForEach-Object {
+    $v = $_.Value -replace "'", "'\''"
+    $forward += ("export {0}='{1}'" -f $_.Name, $v)
+  }
+  $envBlock = $forward -join "`n"
+
+  $script = @"
+set -e
+$envBlock
+cd "$DestDir"
+./uninstall.sh --yes
+"@
+  Write-Step "Running ./uninstall.sh --yes inside WSL distro '$Name'"
+  if ($DryRun) { Write-Host "  [dry-run] wsl -d $Name -- bash -lc <run uninstaller>"; return 0 }
+
+  & wsl.exe -d $Name -- bash -lc $script
+  return $LASTEXITCODE
+}
+
 # ---- main -----------------------------------------------------------------
 Write-Host ""
 Write-Step "claw-installer Windows bootstrap (distro=$Distro, repo=$RepoDir)"
@@ -246,9 +272,21 @@ if ($ver -ne 2) {
 }
 Write-Step "Distro '$Distro' is WSL 2."
 
+# NEW: -Preflight exits here with 0 — all checks passed.
+if ($Preflight) {
+  Write-Step "Preflight checks passed."
+  exit 0
+}
+
 $null = Ensure-Systemd -Name $Distro
 $destInWsl = Copy-RepoIntoWsl -Name $Distro -LocalPath $RepoDir
-$rc = Invoke-BashInstaller -Name $Distro -DestDir $destInWsl
+
+# NEW: -Uninstall runs uninstall.sh instead of install.sh.
+if ($Uninstall) {
+  $rc = Invoke-BashUninstaller -Name $Distro -DestDir $destInWsl
+} else {
+  $rc = Invoke-BashInstaller -Name $Distro -DestDir $destInWsl
+}
 
 Write-Host ""
 if ($rc -eq 0) {

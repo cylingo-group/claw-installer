@@ -1,25 +1,30 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "claw-gui",
+  "productName": "Claw Installer",
   "version": "0.1.0",
-  "identifier": "com.yanxuanlc.claw-gui",
+  "identifier": "com.claw-installer.gui",
   "build": {
     "beforeDevCommand": "pnpm dev",
-    "devUrl": "http://localhost:1420",
+    "devUrl": "http://localhost:5173",
     "beforeBuildCommand": "pnpm build",
     "frontendDist": "../dist"
   },
   "app": {
     "windows": [
       {
-        "title": "claw-gui",
-        "width": 800,
-        "height": 600
+        "title": "Claw Installer",
+        "width": 280,
+        "height": 600,
+        "minWidth": 280,
+        "minHeight": 480,
+        "resizable": true,
+        "center": true
       }
     ],
     "security": {
       "csp": null
-    }
+    },
+    "macOSPrivateApi": true
   },
   "bundle": {
     "active": true,
@@ -30,6 +35,7 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "resources": []
   }
 }
