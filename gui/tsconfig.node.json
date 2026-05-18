@@ -9,7 +9,7 @@
     "isolatedModules": true,
     "skipLibCheck": true,
     "allowSyntheticDefaultImports": true,
-    "types": ["node"]
+    "types": ["node", "vitest/config"]
   },
   "include": ["vite.config.ts"]
 }

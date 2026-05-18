@@ -3,7 +3,7 @@
  * These tests cover the TDD requirement: channel event → state transition
  * for each InstallerEvent variant.
  */
-import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 
 // Mock tauri internals so IS_TAURI_ENV = false in tests
 // (already guaranteed by test-setup.ts which removes __TAURI_INTERNALS__)
@@ -37,16 +37,18 @@ describe("installer-store: initial state", () => {
 
   it("has no logTail, logDrawerOpen, or progress fields (dropped in T2.1)", async () => {
     const { useInstaller } = await import("@/store/installer-store");
-    const state = useInstaller.getState() as Record<string, unknown>;
-    expect("logTail" in state).toBe(false);
-    expect("logDrawerOpen" in state).toBe(false);
-    expect("progress" in state.agents.openclaw).toBe(false);
-    expect("progress" in state.agents.hermes).toBe(false);
+    const raw = useInstaller.getState() as unknown as Record<string, unknown>;
+    expect("logTail" in raw).toBe(false);
+    expect("logDrawerOpen" in raw).toBe(false);
+    const openclaw = useInstaller.getState().agents.openclaw as unknown as Record<string, unknown>;
+    const hermes = useInstaller.getState().agents.hermes as unknown as Record<string, unknown>;
+    expect("progress" in openclaw).toBe(false);
+    expect("progress" in hermes).toBe(false);
   });
 
   it("has toggleLogDrawer removed (T2.1)", async () => {
     const { useInstaller } = await import("@/store/installer-store");
-    const state = useInstaller.getState() as Record<string, unknown>;
+    const state = useInstaller.getState() as unknown as Record<string, unknown>;
     expect("toggleLogDrawer" in state).toBe(false);
   });
 
