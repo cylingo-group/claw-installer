@@ -1,0 +1,36 @@
+# Smoke-test install-openclaw.sh on a fresh Ubuntu 24.04.
+#
+# Run from this directory (installer/docker/):
+#   docker compose up --build           # build + run; logs stream to terminal
+#   docker compose exec openclaw bash   # poke around while gateway runs
+#   docker compose down                 # stop & remove
+#
+# Override knobs:
+#   GATEWAY_PORT=29000 docker compose up --build
+#   INSTALLER_GATEWAY_TOKEN=deadbeef docker compose up --build
+
+services:
+  openclaw:
+    build:
+      # Context = installer/ (one up). The Dockerfile COPYs install.sh, lib/,
+      # steps/, vendor/, and docker/docker-entrypoint.sh from there.
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: openclaw-installer-test
+    environment:
+      INSTALLER_SERVICE_MODE: foreground
+      INSTALLER_GATEWAY_BIND: lan
+      INSTALLER_GATEWAY_PORT: ${GATEWAY_PORT:-18789}
+      INSTALLER_NPM_REGISTRY: ${INSTALLER_NPM_REGISTRY:-https://registry.npmmirror.com}
+      INSTALLER_GATEWAY_TOKEN: ${INSTALLER_GATEWAY_TOKEN:-}
+      # Optional: pass LLM provider creds; docker-entrypoint.sh registers them.
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
+      DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-v4-flash}
+    ports:
+      - "${GATEWAY_PORT:-18789}:${GATEWAY_PORT:-18789}"
+    stdin_open: true
+    tty: true
+    # No restart while debugging — lets us see real failure stderr instead
+    # of an endless reinstall loop. Switch to "unless-stopped" once stable.
+    restart: "no"

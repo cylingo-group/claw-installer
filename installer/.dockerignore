@@ -1,0 +1,12 @@
+**
+!install.sh
+!install-openclaw.sh
+!install-hermes.sh
+!docker/
+!docker/docker-entrypoint.sh
+!lib/
+!lib/**
+!steps/
+!steps/**
+!vendor/
+!vendor/**
