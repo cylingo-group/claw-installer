@@ -1,0 +1,8 @@
+{
+  "name": "claw-installer-workspace",
+  "private": true,
+  "scripts": {
+    "dev:gui":   "pnpm --filter gui tauri dev",
+    "build:gui": "pnpm --filter gui tauri build"
+  }
+}
