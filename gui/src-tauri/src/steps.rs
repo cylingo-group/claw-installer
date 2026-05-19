@@ -1,5 +1,43 @@
+use std::sync::OnceLock;
+use regex::Regex;
+
+/// Compiled regex for the @@step:<key>:<label> sentinel emitted by bash scripts.
+/// Pattern: ^@@step:([a-z][a-z0-9-]*):(.+)$
+///
+/// This is the single authoritative sentinel parser for step transitions.
+/// Scripts emit `display "@@step:<key>:<label>"` which Rust matches here to
+/// produce `InstallerEvent::StepChanged { key, label, detail: "" }`.
+///
+/// The old `==> <key>:` pattern (parse_step_line) has been removed.
+static STEP_RE: OnceLock<Regex> = OnceLock::new();
+
+fn step_regex() -> &'static Regex {
+    STEP_RE.get_or_init(|| {
+        Regex::new(r"^@@step:([a-z][a-z0-9-]*):(.+)$")
+            .expect("@@step regex is valid at compile time")
+    })
+}
+
+/// Try to parse an `@@step:<key>:<label>` sentinel line.
+/// Returns `Some((key, label))` on match, `None` otherwise.
+///
+/// Called from the Rust event loop on every stdout line. On match, emit
+/// `InstallerEvent::StepChanged { key, label, detail: "".into() }` and do NOT
+/// emit a `LogLine` for that line.
+pub fn parse_step_sentinel(line: &str) -> Option<(String, String)> {
+    let caps = step_regex().captures(line.trim())?;
+    let key = caps.get(1)?.as_str().to_string();
+    let label = caps.get(2)?.as_str().to_string();
+    Some((key, label))
+}
+
 /// Returns (label_zh, detail_zh) for a step key.
 /// Unknown keys return the key itself as the label and empty detail.
+///
+/// NOTE: This function is NO LONGER called on the live event stream. Labels
+/// now travel inline in the `@@step:<key>:<label>` sentinel emitted by the
+/// scripts. This function is retained for stub mode / testing / fallback only.
+#[allow(dead_code)]
 pub fn step_label(key: &str) -> (String, &'static str) {
     match key {
         "base-deps"    => ("正在安装系统依赖…".into(),    "curl / git / openssl / unzip"),
@@ -19,121 +57,131 @@ pub fn step_label(key: &str) -> (String, &'static str) {
     }
 }
 
-/// Parse a stdout line from the installer. Returns Some(step_key) if the line
-/// matches the step-header pattern `==> <key>:`.
-pub fn parse_step_line(line: &str) -> Option<&str> {
-    let trimmed = line.trim();
-    if let Some(rest) = trimmed.strip_prefix("==> ") {
-        if let Some(colon_pos) = rest.find(':') {
-            return Some(&rest[..colon_pos]);
-        }
-    }
-    None
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    // ---- parse_step_line tests (TDD: red written first, impl above makes green) ----
+    // =========================================================================
+    // parse_step_sentinel tests (RED-GREEN: new @@step: format)
+    // =========================================================================
 
     #[test]
-    fn parse_step_line_matches_base_deps() {
-        let line = "==> base-deps: checking curl, git, openssl, unzip";
-        assert_eq!(parse_step_line(line), Some("base-deps"));
+    fn sentinel_matches_base_deps() {
+        let line = "@@step:base-deps:正在安装系统依赖…";
+        let result = parse_step_sentinel(line);
+        assert!(result.is_some());
+        let (key, label) = result.unwrap();
+        assert_eq!(key, "base-deps");
+        assert_eq!(label, "正在安装系统依赖…");
     }
 
     #[test]
-    fn parse_step_line_matches_fnm() {
-        let line = "==> fnm: installing v1.38.1 (vendored)";
-        assert_eq!(parse_step_line(line), Some("fnm"));
+    fn sentinel_matches_node() {
+        let line = "@@step:node:正在配置 Node 24 运行时…";
+        let (key, label) = parse_step_sentinel(line).expect("should match");
+        assert_eq!(key, "node");
+        assert_eq!(label, "正在配置 Node 24 运行时…");
     }
 
     #[test]
-    fn parse_step_line_matches_node() {
-        let line = "==> node: installing v22.13.1 via fnm";
-        assert_eq!(parse_step_line(line), Some("node"));
+    fn sentinel_matches_pnpm() {
+        let line = "@@step:pnpm:正在准备 pnpm 包管理器…";
+        let (key, label) = parse_step_sentinel(line).expect("should match");
+        assert_eq!(key, "pnpm");
+        assert_eq!(label, "正在准备 pnpm 包管理器…");
     }
 
     #[test]
-    fn parse_step_line_matches_pnpm() {
-        let line = "==> pnpm: enabling via corepack";
-        assert_eq!(parse_step_line(line), Some("pnpm"));
+    fn sentinel_matches_openclaw_pkg() {
+        let line = "@@step:openclaw-pkg:正在安装 OpenClaw 软件包…";
+        let (key, label) = parse_step_sentinel(line).expect("should match");
+        assert_eq!(key, "openclaw-pkg");
+        assert_eq!(label, "正在安装 OpenClaw 软件包…");
     }
 
     #[test]
-    fn parse_step_line_matches_npmrc() {
-        let line = "==> npmrc: writing mirror block to ~/.npmrc";
-        assert_eq!(parse_step_line(line), Some("npmrc"));
+    fn sentinel_matches_hermes_upstream() {
+        let line = "@@step:hermes-upstream:正在运行 Hermes 上游安装脚本（首次约 2-5 分钟）…";
+        let (key, label) = parse_step_sentinel(line).expect("should match");
+        assert_eq!(key, "hermes-upstream");
+        assert_eq!(label, "正在运行 Hermes 上游安装脚本（首次约 2-5 分钟）…");
     }
 
     #[test]
-    fn parse_step_line_matches_openclaw() {
-        let line = "==> openclaw: pnpm add -g @openclaw/cli";
-        assert_eq!(parse_step_line(line), Some("openclaw"));
+    fn sentinel_matches_detect_platform() {
+        let line = "@@step:detect-platform:正在检测系统平台…";
+        let (key, label) = parse_step_sentinel(line).expect("should match");
+        assert_eq!(key, "detect-platform");
+        assert_eq!(label, "正在检测系统平台…");
     }
 
     #[test]
-    fn parse_step_line_matches_hermes() {
-        let line = "==> hermes: cloning hermes-agent into ~/code/hermes-agent";
-        assert_eq!(parse_step_line(line), Some("hermes"));
+    fn sentinel_label_comes_from_sentinel_not_lookup() {
+        // The label in the sentinel is authoritative; step_label() must NOT be
+        // called to override it. This test verifies the sentinel returns the
+        // label exactly as emitted by the script.
+        let line = "@@step:node:正在配置 Node 运行时（来自脚本）";
+        let (_, label) = parse_step_sentinel(line).expect("should match");
+        assert_eq!(label, "正在配置 Node 运行时（来自脚本）");
+        // The step_label lookup would return a different string:
+        let (lookup_label, _) = step_label("node");
+        assert_ne!(label, lookup_label); // they differ — script label wins
     }
 
     #[test]
-    fn parse_step_line_matches_system_tools() {
-        let line = "==> system-tools: installing ripgrep, ffmpeg";
-        assert_eq!(parse_step_line(line), Some("system-tools"));
+    fn sentinel_does_not_match_plain_line() {
+        assert!(parse_step_sentinel("正在安装系统依赖…").is_none());
     }
 
     #[test]
-    fn parse_step_line_matches_shell_rc() {
-        let line = "==> shell-rc: updating ~/.bashrc";
-        assert_eq!(parse_step_line(line), Some("shell-rc"));
+    fn sentinel_does_not_match_old_style_arrow() {
+        assert!(parse_step_sentinel("==> base-deps: checking curl").is_none());
     }
 
     #[test]
-    fn parse_step_line_matches_uv() {
-        let line = "==> uv: installing python package manager";
-        assert_eq!(parse_step_line(line), Some("uv"));
+    fn sentinel_does_not_match_pnpm_output() {
+        assert!(parse_step_sentinel("pnpm add -g openclaw@latest").is_none());
     }
 
     #[test]
-    fn parse_step_line_matches_python() {
-        let line = "==> python: installing 3.11 via uv";
-        assert_eq!(parse_step_line(line), Some("python"));
+    fn sentinel_does_not_match_empty() {
+        assert!(parse_step_sentinel("").is_none());
     }
 
     #[test]
-    fn parse_step_line_matches_hermes_node() {
-        let line = "==> hermes-node: configuring Node v22";
-        assert_eq!(parse_step_line(line), Some("hermes-node"));
+    fn sentinel_does_not_match_partial_prefix() {
+        assert!(parse_step_sentinel("@@step:bad").is_none());
+        assert!(parse_step_sentinel("@@step::label").is_none());
     }
 
     #[test]
-    fn parse_step_line_does_not_match_non_step_line() {
-        let line = "    curl 8.7.1                  preexisting";
-        assert_eq!(parse_step_line(line), None);
+    fn sentinel_key_must_start_with_lowercase_letter() {
+        // Key starting with digit should NOT match (regex requires [a-z] first)
+        assert!(parse_step_sentinel("@@step:1bad:label").is_none());
     }
 
     #[test]
-    fn parse_step_line_does_not_match_plain_arrow() {
-        let line = "==> some line without colon";
-        assert_eq!(parse_step_line(line), None);
+    fn sentinel_handles_leading_whitespace() {
+        // trim() is applied before regex match
+        let line = "  @@step:fnm:正在安装 fnm…";
+        let result = parse_step_sentinel(line);
+        assert!(result.is_some());
+        let (key, _) = result.unwrap();
+        assert_eq!(key, "fnm");
     }
 
     #[test]
-    fn parse_step_line_handles_leading_whitespace() {
-        let line = "  ==> base-deps: checking";
-        assert_eq!(parse_step_line(line), Some("base-deps"));
+    fn sentinel_label_may_contain_colons() {
+        // Label part is (.+) which matches colons — only first two colons are split
+        let line = "@@step:start:正在初始化：准备环境";
+        let (key, label) = parse_step_sentinel(line).expect("should match");
+        assert_eq!(key, "start");
+        assert_eq!(label, "正在初始化：准备环境");
     }
 
-    #[test]
-    fn parse_step_line_returns_none_for_empty() {
-        assert_eq!(parse_step_line(""), None);
-    }
-
-    // ---- step_label tests ----
-    // Note: step_label returns (String, &'static str)
+    // =========================================================================
+    // step_label tests (stub mode / backward compat — not used on live stream)
+    // =========================================================================
 
     #[test]
     fn step_label_base_deps() {
