@@ -1,6 +1,13 @@
 import type { ReactNode } from "react";
 import { useInstaller, type AgentId, type AgentState } from "@/store/installer-store";
 import { cn } from "@/lib/utils";
+import openclawLogo from "@/assets/agents/openclaw.svg";
+import hermesLogo from "@/assets/agents/hermes.png";
+
+const AGENT_LOGOS: Record<AgentId, string> = {
+  openclaw: openclawLogo,
+  hermes: hermesLogo,
+};
 
 export function AgentCard({ agent }: { agent: AgentState }) {
   const startInstall = useInstaller((s) => s.startInstall);
@@ -11,11 +18,23 @@ export function AgentCard({ agent }: { agent: AgentState }) {
   const openSettings = useInstaller((s) => s.openSettings);
   const isBootstrapping = useInstaller((s) => s.isBootstrapping);
   const hostStatus = useInstaller((s) => s.hostStatus);
+  const anyTransitioning = useInstaller((s) =>
+    Object.values(s.agents).some(
+      (a) => a.status === "installing" || a.status === "uninstalling"
+    )
+  );
+
+  const serviceActionAgent = useInstaller((s) => s.serviceActionAgent);
+  const serviceActionKind = useInstaller((s) => s.serviceActionKind);
+  const lifecycleBusy = serviceActionAgent === agent.id;
+  const otherLifecycleBusy = serviceActionAgent !== null && !lifecycleBusy;
 
   const installed = agent.status !== "not-installed" && agent.status !== "error";
   const isError = agent.status === "error";
   const transitioning = agent.status === "installing" || agent.status === "uninstalling";
-  const installDisabled = isBootstrapping || hostStatus !== "ok";
+  const otherTransitioning = anyTransitioning && !transitioning;
+  // Disable destructive/long-running actions while *any* other agent is in flight.
+  const installDisabled = isBootstrapping || hostStatus !== "ok" || otherTransitioning || otherLifecycleBusy;
 
   return (
     <article className="rounded-lg border border-border bg-surface px-3 py-3">
@@ -26,10 +45,15 @@ export function AgentCard({ agent }: { agent: AgentState }) {
         </div>
         {installed && !transitioning && (
           <div className="-mr-1 -mt-1 flex shrink-0 items-center gap-0.5">
-            <IconBtn label="配置" onClick={() => openSettings(agent.id)}>
+            <IconBtn label="配置" onClick={() => openSettings(agent.id)} disabled={lifecycleBusy}>
               <GearIcon />
             </IconBtn>
-            <IconBtn label="卸载" tone="danger" onClick={() => openUninstall(agent.id)}>
+            <IconBtn
+              label="卸载"
+              tone="danger"
+              disabled={otherTransitioning || lifecycleBusy || otherLifecycleBusy}
+              onClick={() => openUninstall(agent.id)}
+            >
               <TrashIcon />
             </IconBtn>
           </div>
@@ -54,6 +78,7 @@ export function AgentCard({ agent }: { agent: AgentState }) {
           <div className="space-y-1.5">
             <div className="rounded bg-danger/5 px-2 py-1.5 text-[11px] text-danger leading-relaxed">
               {agent.errorMessage ?? "安装失败"}
+              <LogPathHint />
             </div>
             <button
               onClick={() => startInstall([agent.id])}
@@ -78,10 +103,28 @@ export function AgentCard({ agent }: { agent: AgentState }) {
         )}
 
         {installed && !transitioning && (
-          <div className="grid grid-cols-3 gap-1.5">
-            <ActionBtn label="启动" icon={<PlayIcon />} onClick={() => startService(agent.id)} />
-            <ActionBtn label="停止" icon={<StopIcon />} onClick={() => stopService(agent.id)} />
-            <ActionBtn label="重启" icon={<RestartIcon />} onClick={() => restart(agent.id)} />
+          <div className="grid grid-cols-2 gap-1.5">
+            {agent.status === "ready" ? (
+              <ActionBtn
+                label={lifecycleBusy && serviceActionKind === "stop" ? "停止中…" : "停止"}
+                icon={lifecycleBusy && serviceActionKind === "stop" ? <SpinnerIcon /> : <StopIcon />}
+                onClick={() => stopService(agent.id)}
+                disabled={lifecycleBusy || otherLifecycleBusy || otherTransitioning}
+              />
+            ) : (
+              <ActionBtn
+                label={lifecycleBusy && serviceActionKind === "start" ? "启动中…" : "启动"}
+                icon={lifecycleBusy && serviceActionKind === "start" ? <SpinnerIcon /> : <PlayIcon />}
+                onClick={() => startService(agent.id)}
+                disabled={lifecycleBusy || otherLifecycleBusy || otherTransitioning}
+              />
+            )}
+            <ActionBtn
+              label={lifecycleBusy && serviceActionKind === "restart" ? "重启中…" : "重启"}
+              icon={lifecycleBusy && serviceActionKind === "restart" ? <SpinnerIcon /> : <RestartIcon />}
+              onClick={() => restart(agent.id)}
+              disabled={lifecycleBusy || otherLifecycleBusy || otherTransitioning}
+            />
           </div>
         )}
       </div>
@@ -128,19 +171,36 @@ function ProgressBar({
   );
 }
 
+function LogPathHint() {
+  const path = useInstaller((s) => s.currentLogPath);
+  if (!path) return null;
+  return (
+    <div className="mt-1 truncate font-mono text-[10px] text-muted" title={path} lang="en">
+      完整日志：{path}
+    </div>
+  );
+}
+
 function ActionBtn({
   label,
   icon,
   onClick,
+  disabled = false,
 }: {
   label: string;
   icon: ReactNode;
   onClick: () => void;
+  disabled?: boolean;
 }) {
   return (
     <button
       onClick={onClick}
-      className="flex items-center justify-center gap-1 rounded border border-border bg-background px-1.5 py-1.5 text-xs font-medium text-foreground transition-colors hover:border-foreground/40"
+      disabled={disabled}
+      className={cn(
+        "flex items-center justify-center gap-1 rounded border border-border bg-background px-1.5 py-1.5 text-xs font-medium text-foreground transition-colors",
+        "hover:border-foreground/40",
+        "disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-border"
+      )}
     >
       <span className="grid h-3 w-3 shrink-0 place-items-center">{icon}</span>
       {label}
@@ -148,24 +208,43 @@ function ActionBtn({
   );
 }
 
+function SpinnerIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      className="h-3 w-3 animate-spin"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.4"
+      strokeLinecap="round"
+    >
+      <path d="M21 12a9 9 0 1 1-3-6.7" />
+    </svg>
+  );
+}
+
 function IconBtn({
   label,
   onClick,
   tone = "neutral",
+  disabled = false,
   children,
 }: {
   label: string;
   onClick: () => void;
   tone?: "neutral" | "danger";
+  disabled?: boolean;
   children: ReactNode;
 }) {
   return (
     <button
       onClick={onClick}
+      disabled={disabled}
       aria-label={label}
       title={label}
       className={cn(
         "grid h-7 w-7 place-items-center rounded transition-colors",
+        "disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent",
         tone === "danger"
           ? "text-muted hover:bg-danger/10 hover:text-danger"
           : "text-muted hover:bg-background hover:text-foreground"
@@ -221,20 +300,12 @@ function TrashIcon() {
 }
 
 function AgentIcon({ id }: { id: AgentId }) {
-  if (id === "openclaw") {
-    return (
-      <svg viewBox="0 0 24 24" className="mt-0.5 h-4 w-4 shrink-0 text-muted" fill="none" stroke="currentColor" strokeWidth="1.6">
-        <path d="M5 12c0-3.866 3.134-7 7-7s7 3.134 7 7" strokeLinecap="round" />
-        <path d="M5 12c0 3.866 3.134 7 7 7" strokeLinecap="round" />
-        <circle cx="12" cy="12" r="2" fill="currentColor" />
-      </svg>
-    );
-  }
   return (
-    <svg viewBox="0 0 24 24" className="mt-0.5 h-4 w-4 shrink-0 text-muted" fill="none" stroke="currentColor" strokeWidth="1.6">
-      <path d="M5 7l7 4 7-4" strokeLinejoin="round" strokeLinecap="round" />
-      <path d="M5 7v10l7 4 7-4V7" strokeLinejoin="round" strokeLinecap="round" />
-      <path d="M12 11v10" strokeLinecap="round" />
-    </svg>
+    <img
+      src={AGENT_LOGOS[id]}
+      alt={`${id} logo`}
+      className="mt-0.5 h-5 w-5 shrink-0 rounded-sm object-contain"
+      draggable={false}
+    />
   );
 }

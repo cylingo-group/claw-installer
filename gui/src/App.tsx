@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { Sidebar } from "@/components/installer/Sidebar";
 import { UninstallDialog } from "@/components/installer/UninstallDialog";
 import { SettingsPanel } from "@/components/installer/SettingsPanel";
+import { RebootModal } from "@/components/installer/RebootModal";
 import { useInstaller } from "@/store/installer-store";
 
 export default function App() {
@@ -12,12 +13,11 @@ export default function App() {
   }, [bootstrap]);
 
   return (
-    <div className="grid h-dvh w-full place-items-start bg-surface text-foreground">
-      <div className="relative h-dvh w-[280px] overflow-hidden bg-surface">
-        <Sidebar />
-        <SettingsPanel />
-        <UninstallDialog />
-      </div>
+    <div className="relative flex h-dvh w-full overflow-hidden bg-surface text-foreground">
+      <Sidebar />
+      <SettingsPanel />
+      <UninstallDialog />
+      <RebootModal />
     </div>
   );
 }

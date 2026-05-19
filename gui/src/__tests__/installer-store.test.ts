@@ -35,10 +35,13 @@ describe("installer-store: initial state", () => {
     expect(state.isBootstrapping).toBe(true);
   });
 
-  it("has no logTail, logDrawerOpen, or progress fields (dropped in T2.1)", async () => {
+  it("re-added logTail (5-line strip), still no logDrawerOpen or per-agent progress", async () => {
     const { useInstaller } = await import("@/store/installer-store");
     const raw = useInstaller.getState() as unknown as Record<string, unknown>;
-    expect("logTail" in raw).toBe(false);
+    // logTail came back in v1.0.1 to power the 5-line log strip above the bottom CTA.
+    expect("logTail" in raw).toBe(true);
+    expect(Array.isArray(raw.logTail)).toBe(true);
+    expect((raw.logTail as unknown[]).length).toBe(0);
     expect("logDrawerOpen" in raw).toBe(false);
     const openclaw = useInstaller.getState().agents.openclaw as unknown as Record<string, unknown>;
     const hermes = useInstaller.getState().agents.hermes as unknown as Record<string, unknown>;
@@ -218,5 +221,58 @@ describe("installer-store: stub mode parity (AC12)", () => {
     expect(useInstaller.getState().agents.openclaw.status).toBe("installing");
 
     vi.doUnmock("@/stub/sample");
+  });
+});
+
+describe("installer-store: RebootRequired event (CAP-7)", () => {
+  beforeEach(async () => {
+    const { useInstaller, initialAgents } = await import("@/store/installer-store");
+    useInstaller.setState({
+      agents: { ...initialAgents },
+      installQueue: [],
+      isBootstrapping: false,
+      rebootModalOpen: false,
+    });
+  });
+
+  it("rebootModalOpen starts as false", async () => {
+    const { useInstaller } = await import("@/store/installer-store");
+    expect(useInstaller.getState().rebootModalOpen).toBe(false);
+  });
+
+  it("handleInstallerEvent with RebootRequired sets rebootModalOpen to true", async () => {
+    const { useInstaller } = await import("@/store/installer-store");
+    // Put an agent in installing state + queue
+    useInstaller.setState((s) => ({
+      agents: {
+        ...s.agents,
+        openclaw: { ...s.agents.openclaw, status: "installing" },
+      },
+      installQueue: ["openclaw"],
+    }));
+
+    // Simulate the RebootRequired event arriving via the internal dispatcher.
+    // We call the exported triggerRebootRequired test helper (added to store).
+    useInstaller.getState().simulateRebootRequired("wsl-feature");
+
+    const state = useInstaller.getState();
+    expect(state.rebootModalOpen).toBe(true);
+    expect(state.rebootModalKind).toBe("wsl-feature");
+    // Queued installing agents must transition to not-installed
+    expect(state.agents.openclaw.status).toBe("not-installed");
+    expect(state.installQueue).toHaveLength(0);
+  });
+
+  it("dismissRebootModal sets rebootModalOpen to false", async () => {
+    const { useInstaller } = await import("@/store/installer-store");
+    useInstaller.setState({ rebootModalOpen: true, rebootModalKind: "wsl-feature" });
+    useInstaller.getState().dismissRebootModal();
+    expect(useInstaller.getState().rebootModalOpen).toBe(false);
+  });
+
+  it("RebootRequired with distro-firstrun sets kind correctly", async () => {
+    const { useInstaller } = await import("@/store/installer-store");
+    useInstaller.getState().simulateRebootRequired("distro-firstrun");
+    expect(useInstaller.getState().rebootModalKind).toBe("distro-firstrun");
   });
 });

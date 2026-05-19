@@ -1,0 +1,38 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build artifacts
+dist/
+build/
+target/
+*.tsbuildinfo
+
+# Rust
+gui/src-tauri/target/
+gui/src-tauri/gen/
+
+# macOS
+.DS_Store
+
+# IDE / editor
+.idea/
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+
+# Logs
+*.log
+!installer/install-*.log.sample
+
+# Playwright / debug artifacts
+.playwright-mcp/
+
+# Debug screenshots (root-level, not the Tauri app icons)
+/claw-*.png
+/gui-*.png
+/*.screenshot.png
+
+# Local env
+.env
+.env.local

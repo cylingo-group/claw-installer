@@ -1,0 +1,6 @@
+{
+  "layouts": ["dashboard-sidebar", "split-pane", "bento-grid"],
+  "palettes": ["graphite", "midnight", "vercel-zinc", "warm-paper", "soft-pastel"],
+  "typography": ["neutral-modern", "vercel-flat", "humanist-friendly"],
+  "visualStyles": ["minimal", "soft-neumorphism", "bento-flat"]
+}

@@ -1,7 +1,9 @@
 import { useInstaller, type AgentId } from "@/store/installer-store";
 import { AgentCard } from "./AgentCard";
 import { HostStatusBanner } from "./HostStatusBanner";
+import { LogStrip } from "./LogStrip";
 import { cn } from "@/lib/utils";
+import clawLogo from "@/assets/claw-installer-logo-v2.png";
 
 export function Sidebar() {
   const agents = useInstaller((s) => s.agents);
@@ -9,6 +11,7 @@ export function Sidebar() {
   const startInstall = useInstaller((s) => s.startInstall);
   const hostStatus = useInstaller((s) => s.hostStatus);
   const isBootstrapping = useInstaller((s) => s.isBootstrapping);
+  const serviceActionAgent = useInstaller((s) => s.serviceActionAgent);
 
   const list = Object.values(agents);
   const installing = installQueue.length > 0;
@@ -17,7 +20,8 @@ export function Sidebar() {
     .filter((a) => a.status === "not-installed" || a.status === "error")
     .map((a) => a.id) as AgentId[];
   const hostBlocked = hostStatus !== "ok" || isBootstrapping;
-  const disabled = installing || uninstalling || pending.length === 0 || hostBlocked;
+  const disabled =
+    installing || uninstalling || pending.length === 0 || hostBlocked || serviceActionAgent !== null;
   const label = installing
     ? "正在安装…"
     : uninstalling
@@ -28,12 +32,12 @@ export function Sidebar() {
 
   return (
     <aside className="flex h-full w-full flex-col bg-surface">
-      <div className="flex items-center gap-2.5 px-5 pt-5 pb-4">
+      <div className="flex items-center gap-3 pl-3 pr-5 pt-5 pb-4">
         <ClawMark />
-        <div className="leading-tight">
+        <div className="flex flex-col justify-center leading-tight">
           <div className="text-sm font-semibold tracking-tight">Claw Installer</div>
           <div className="text-[11px] text-muted" lang="en">
-            v0.1 · macOS / Linux / Windows
+            v1.0.0 · macOS / Linux / Windows
           </div>
         </div>
       </div>
@@ -52,6 +56,8 @@ export function Sidebar() {
           ))}
         </ul>
       </div>
+
+      <LogStrip />
 
       <div className="border-t border-border p-3">
         <button
@@ -72,12 +78,11 @@ export function Sidebar() {
 
 function ClawMark() {
   return (
-    <span className="grid h-8 w-8 place-items-center rounded-lg bg-foreground text-surface">
-      <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
-        <path d="M6 4c0 6 3 11 6 14" strokeLinecap="round" />
-        <path d="M12 4c0 6 3 11 6 14" strokeLinecap="round" />
-        <path d="M18 4c0 6-3 11-6 14" strokeLinecap="round" />
-      </svg>
-    </span>
+    <img
+      src={clawLogo}
+      alt="Claw Installer"
+      className="h-11 w-11 shrink-0 rounded-lg object-contain"
+      draggable={false}
+    />
   );
 }

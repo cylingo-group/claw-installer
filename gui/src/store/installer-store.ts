@@ -65,21 +65,37 @@ export type InstallerEvent =
   | { type: "StepChanged"; key: string; label: string; detail: string }
   | { type: "StatusChanged"; agent: string; status: string; message: string | null }
   | { type: "Finished"; success: boolean; message: string | null }
-  | { type: "LogLine"; line: string };
+  | { type: "LogLine"; line: string }
+  | { type: "LogPath"; path: string }
+  | { type: "RebootRequired"; kind: string };
 
 interface State {
   agents: Record<AgentId, AgentState>;
   selectedAgent: AgentId;
   /** which agents are currently being processed */
   installQueue: AgentId[];
+  /** rolling tail of user-friendly log lines (filtered subset, last ~50 kept) */
+  logTail: string[];
+  /** absolute path to the full execution log on disk for the current session */
+  currentLogPath: string | null;
+  /** whether the bottom log panel is expanded (the header bar is always visible) */
+  logExpanded: boolean;
   settings: InstallerSettings;
   showAdvanced: boolean;
   settingsTarget: AgentId | null;
   uninstallTarget: AgentId | null;
+  /** Agent currently running a start/stop/restart shell action (null if none). */
+  serviceActionAgent: AgentId | null;
+  /** Which action is in flight when serviceActionAgent is set. */
+  serviceActionKind: "start" | "stop" | "restart" | null;
   installStartedAt: number | null;
   installEndedAt: number | null;
   hostStatus: HostStatus;
   isBootstrapping: boolean;
+  /** Whether the reboot-required modal is open (Windows WSL provisioning). */
+  rebootModalOpen: boolean;
+  /** Discriminates the modal variant: "wsl-feature" | "distro-firstrun". */
+  rebootModalKind: string;
 
   selectAgent: (id: AgentId) => void;
   startInstall: (ids: AgentId[]) => void;
@@ -99,6 +115,11 @@ interface State {
     value: InstallerSettings[K]
   ) => void;
   // New actions
+  appendLog: (line: string) => void;
+  clearLog: () => void;
+  setLogPath: (path: string | null) => void;
+  setLogExpanded: (v: boolean) => void;
+  toggleLogExpanded: () => void;
   setCurrentStep: (id: AgentId, step: string | null, detail: string | null) => void;
   setAgentStatus: (
     id: AgentId,
@@ -107,6 +128,9 @@ interface State {
   ) => void;
   refreshHostStatus: () => Promise<void>;
   bootstrap: () => Promise<void>;
+  dismissRebootModal: () => void;
+  /** Test helper: directly fire the RebootRequired state transition. */
+  simulateRebootRequired: (kind: string) => void;
 }
 
 export const initialAgents: Record<AgentId, AgentState> = {
@@ -139,6 +163,13 @@ export const initialAgents: Record<AgentId, AgentState> = {
   },
 };
 
+// Strip ANSI escape codes (CSI sequences) so log output renders cleanly in UI.
+// eslint-disable-next-line no-control-regex
+const ANSI_RE = /\x1b\[[0-9;]*[A-Za-z]/g;
+function stripAnsi(input: string): string {
+  return input.replace(ANSI_RE, "").replace(/\r/g, "").replace(/\n$/, "");
+}
+
 // ---- Settings → env var mapping (proposal §C2) -------------------------------
 function buildEnv(settings: InstallerSettings): Record<string, string> {
   const env: Record<string, string> = {};
@@ -169,11 +200,14 @@ export const useInstaller = create<State>((set, get) => ({
   agents: { ...initialAgents },
   selectedAgent: "openclaw",
   installQueue: [],
+  logTail: [],
+  currentLogPath: null,
+  logExpanded: false,
   settings: {
     registryMirror: "https://registry.npmmirror.com",
-    workspace: "~/openclaw",
+    workspace: "",
     gatewayPort: 7841,
-    gatewayBind: "127.0.0.1",
+    gatewayBind: "loopback",
     serviceMode: "daemon",
     forceReinstall: false,
     skipBrowser: false,
@@ -181,10 +215,14 @@ export const useInstaller = create<State>((set, get) => ({
   showAdvanced: false,
   settingsTarget: null,
   uninstallTarget: null,
+  serviceActionAgent: null,
+  serviceActionKind: null,
   installStartedAt: null,
   installEndedAt: null,
   hostStatus: "ok",
   isBootstrapping: true,
+  rebootModalOpen: false,
+  rebootModalKind: "wsl-feature",
 
   selectAgent: (id) => set({ selectedAgent: id }),
 
@@ -207,6 +245,9 @@ export const useInstaller = create<State>((set, get) => ({
         installStartedAt: Date.now(),
         installEndedAt: null,
         selectedAgent: queue[0],
+        logTail: [],
+        currentLogPath: null,
+        logExpanded: true,
       };
     });
 
@@ -216,7 +257,23 @@ export const useInstaller = create<State>((set, get) => ({
     if (IS_TAURI_ENV) {
       // Deferred import to avoid loading tauri IPC in browser/test environments
       import("@/api/installer").then(({ runInstaller }) => {
-        runInstaller(queue, env, (event) => handleInstallerEvent(event, queue));
+        runInstaller(queue, env, (event) => handleInstallerEvent(event, queue)).catch((err) => {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.error("[runInstaller] rejected:", msg);
+          set((s) => {
+            const agents = { ...s.agents };
+            for (const aid of queue) {
+              agents[aid] = {
+                ...agents[aid],
+                status: "error",
+                errorMessage: `安装无法启动：${msg}`,
+                currentStep: null,
+                currentStepDetail: null,
+              };
+            }
+            return { agents, installQueue: [], installEndedAt: Date.now() };
+          });
+        });
       });
     } else {
       import("@/stub/sample").then(({ runStubInstaller }) => {
@@ -245,17 +302,9 @@ export const useInstaller = create<State>((set, get) => ({
     });
   },
 
-  restartService: (_id) => {
-    // No-op in v1 (AC10)
-  },
-
-  stopService: (_id) => {
-    // No-op in v1 (AC10)
-  },
-
-  startService: (_id) => {
-    // No-op in v1 (AC10)
-  },
+  restartService: (id) => runLifecycle(id, "restart", set, get),
+  stopService:    (id) => runLifecycle(id, "stop",    set, get),
+  startService:   (id) => runLifecycle(id, "start",   set, get),
 
   openUninstall: (id) => set({ uninstallTarget: id }),
   closeUninstall: () => set({ uninstallTarget: null }),
@@ -274,9 +323,24 @@ export const useInstaller = create<State>((set, get) => ({
         },
       },
       uninstallTarget: null,
+      logTail: [],
+      currentLogPath: null,
+      logExpanded: true,
     }));
 
     const handleEvent = (event: InstallerEvent) => {
+      if (event.type === "LogLine") {
+        get().appendLog(event.line);
+        return;
+      }
+      if (event.type === "LogPath") {
+        get().setLogPath(event.path);
+        return;
+      }
+      if (event.type === "RebootRequired") {
+        get().simulateRebootRequired(event.kind);
+        return;
+      }
       if (event.type === "StepChanged") {
         set((s) => ({
           agents: {
@@ -315,7 +379,22 @@ export const useInstaller = create<State>((set, get) => ({
 
     if (IS_TAURI_ENV) {
       import("@/api/installer").then(({ runUninstaller }) => {
-        runUninstaller(id, handleEvent);
+        runUninstaller(id, handleEvent).catch((err) => {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.error("[runUninstaller] rejected:", msg);
+          set((s) => ({
+            agents: {
+              ...s.agents,
+              [id]: {
+                ...s.agents[id],
+                status: "error",
+                errorMessage: `卸载无法启动：${msg}`,
+                currentStep: null,
+                currentStepDetail: null,
+              },
+            },
+          }));
+        });
       });
     } else {
       import("@/stub/sample").then(({ runStubUninstaller }) => {
@@ -340,6 +419,15 @@ export const useInstaller = create<State>((set, get) => ({
   toggleAdvanced: () => set((s) => ({ showAdvanced: !s.showAdvanced })),
   updateSettings: (key, value) =>
     set((s) => ({ settings: { ...s.settings, [key]: value } })),
+
+  appendLog: (line) =>
+    set((s) => ({
+      logTail: [...s.logTail, stripAnsi(line)].slice(-50),
+    })),
+  clearLog: () => set({ logTail: [] }),
+  setLogPath: (path) => set({ currentLogPath: path }),
+  setLogExpanded: (v) => set({ logExpanded: v }),
+  toggleLogExpanded: () => set((s) => ({ logExpanded: !s.logExpanded })),
 
   setCurrentStep: (id, step, detail) =>
     set((s) => ({
@@ -368,6 +456,25 @@ export const useInstaller = create<State>((set, get) => ({
         },
       },
     })),
+
+  dismissRebootModal: () => set({ rebootModalOpen: false }),
+
+  simulateRebootRequired: (kind: string) => {
+    set((s) => {
+      const agents = { ...s.agents };
+      for (const id of s.installQueue) {
+        if (agents[id].status === "installing") {
+          agents[id] = { ...agents[id], status: "not-installed" };
+        }
+      }
+      return {
+        rebootModalOpen: true,
+        rebootModalKind: kind,
+        agents,
+        installQueue: [],
+      };
+    });
+  },
 
   refreshHostStatus: async () => {
     if (!IS_TAURI_ENV) return;
@@ -413,6 +520,14 @@ export const useInstaller = create<State>((set, get) => ({
 // Shared handler for both install and cancel flows.
 function handleInstallerEvent(event: InstallerEvent, queue: AgentId[]) {
   const store = useInstaller.getState();
+  if (event.type === "LogLine") {
+    store.appendLog(event.line);
+    return;
+  }
+  if (event.type === "LogPath") {
+    store.setLogPath(event.path);
+    return;
+  }
   if (event.type === "StepChanged") {
     // Apply step to all currently-installing agents (simplified: apply to queue[0])
     const activeId = queue[0];
@@ -424,6 +539,8 @@ function handleInstallerEvent(event: InstallerEvent, queue: AgentId[]) {
     if (id === "openclaw" || id === "hermes") {
       store.setAgentStatus(id, event.status as AgentStatus);
     }
+  } else if (event.type === "RebootRequired") {
+    useInstaller.getState().simulateRebootRequired(event.kind);
   } else if (event.type === "Finished") {
     if (event.success) {
       // Transition all queued agents to ready
@@ -464,4 +581,115 @@ function handleInstallerEvent(event: InstallerEvent, queue: AgentId[]) {
 
 export function isAnyInstalling(state: State): boolean {
   return state.installQueue.length > 0;
+}
+
+// ---- Service lifecycle (start / stop / restart) ------------------------------
+// Each action shells out to agents/<id>/<action>.sh via the Tauri backend.
+// Status flips:
+//   start   → ready    (on success)   | error (on failure)
+//   stop    → stopped  (on success)   | error (on failure)
+//   restart → ready    (on success)   | error (on failure)
+type Setter = (
+  partial:
+    | Partial<State>
+    | ((state: State) => Partial<State>)
+) => void;
+type Getter = () => State;
+
+function runLifecycle(
+  id: AgentId,
+  action: "start" | "stop" | "restart",
+  set: Setter,
+  get: Getter
+) {
+  // Guard: don't stack lifecycle actions or run them during install/uninstall.
+  const s = get();
+  if (s.serviceActionAgent || s.installQueue.length > 0) return;
+  if (s.agents[id].status === "installing" || s.agents[id].status === "uninstalling") return;
+
+  set((cur) => ({
+    serviceActionAgent: id,
+    serviceActionKind: action,
+    logTail: [],
+    currentLogPath: null,
+    logExpanded: true,
+    agents: {
+      ...cur.agents,
+      [id]: { ...cur.agents[id], currentStep: null, currentStepDetail: null },
+    },
+  }));
+
+  const onEvent = (event: InstallerEvent) => {
+    if (event.type === "LogLine") {
+      get().appendLog(event.line);
+      return;
+    }
+    if (event.type === "LogPath") {
+      get().setLogPath(event.path);
+      return;
+    }
+    if (event.type === "StepChanged") {
+      get().setCurrentStep(id, event.label, event.detail);
+      return;
+    }
+    if (event.type === "Finished") {
+      set((cur) => {
+        const agent = cur.agents[id];
+        const next: AgentState = event.success
+          ? {
+              ...agent,
+              status: action === "stop" ? "stopped" : "ready",
+              currentStep: null,
+              currentStepDetail: null,
+              errorMessage: undefined,
+            }
+          : {
+              ...agent,
+              status: "error",
+              errorMessage:
+                event.message ??
+                (action === "start"
+                  ? "启动失败"
+                  : action === "stop"
+                  ? "停止失败"
+                  : "重启失败"),
+              currentStep: null,
+              currentStepDetail: null,
+            };
+        return {
+          agents: { ...cur.agents, [id]: next },
+          serviceActionAgent: null,
+          serviceActionKind: null,
+        };
+      });
+    }
+  };
+
+  if (IS_TAURI_ENV) {
+    import("@/api/installer").then(({ runServiceAction }) => {
+      runServiceAction(id, action, onEvent).catch((err) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(`[runServiceAction:${action}] rejected:`, msg);
+        set((cur) => ({
+          agents: {
+            ...cur.agents,
+            [id]: {
+              ...cur.agents[id],
+              status: "error",
+              errorMessage: `${action} 无法启动：${msg}`,
+              currentStep: null,
+              currentStepDetail: null,
+            },
+          },
+          serviceActionAgent: null,
+          serviceActionKind: null,
+        }));
+      });
+    });
+  } else {
+    // Browser/stub: simulate success after a short delay so the UI flow works.
+    setTimeout(() => {
+      onEvent({ type: "Finished", success: true, message: null });
+    }, 600);
+  }
 }

@@ -1,6 +1,6 @@
 /// Manifest TSV parser.
 ///
-/// Format (per installer/lib/manifest.sh):
+/// Format (per shell/lib/manifest.sh):
 ///   timestamp TAB action TAB target TAB status TAB note
 ///   (5 columns, 0-indexed: 0=ts, 1=action, 2=target, 3=status, 4=note)
 ///

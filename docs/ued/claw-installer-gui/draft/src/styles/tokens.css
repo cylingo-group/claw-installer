@@ -1,0 +1,63 @@
+/* ============================================================
+ * GENERATED from .ued/style-decision.json by ued-framework.
+ * DO NOT HAND-EDIT — will be overwritten on next decision save.
+ *
+ *   layout:        dashboard-sidebar
+ *   palette:       graphite
+ *   typography:    neutral-modern
+ *   visualStyle:   minimal
+ *   locales:       en, zh-Hans (primary: zh-Hans)
+ *   updated:       2026-05-18T13:51:51.459Z
+ * ============================================================ */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700&display=swap');
+
+:root {
+  /* palette: graphite */
+  --ued-background: #FAFAFA;
+  --ued-surface: #FFFFFF;
+  --ued-ink: #0A0A0A;
+  --ued-muted: #525252;
+  --ued-border: #E5E5E5;
+  --ued-accent: #3B82F6;
+  --ued-danger: #DC2626;
+  --ued-success: #16A34A;
+
+  /* typography: neutral-modern */
+  --ued-font-en-heading: "Inter";
+  --ued-font-en-body: "Inter";
+  --ued-font-en-fallback: system-ui, -apple-system, "SF Pro Text", sans-serif;
+  --ued-font-zh-Hans-heading: "Noto Sans SC";
+  --ued-font-zh-Hans-body: "Noto Sans SC";
+  --ued-font-zh-Hans-fallback: "PingFang SC", "Microsoft YaHei", "Hiragino Sans GB", sans-serif;
+  --ued-font-mono: "JetBrains Mono", ui-monospace, "SF Mono", monospace;
+
+  /* visualStyle: minimal */
+  --ued-radius:    6px;
+  --ued-radius-sm: 4px;
+  --ued-radius-lg: 10px;
+  --ued-radius-xl: 14px;
+  --ued-shadow:    none;
+  --ued-border-width: 1px;
+  --ued-density:   16px;
+  --ued-motion-duration: 120ms;
+  --ued-motion-easing:   cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* default active stack (locale=zh-Hans); :lang() rules below override */
+  --ued-font-heading: var(--ued-font-zh-Hans-heading, sans-serif), var(--ued-font-zh-Hans-fallback, sans-serif);
+  --ued-font-body:    var(--ued-font-zh-Hans-body, sans-serif),    var(--ued-font-zh-Hans-fallback, sans-serif);
+  --ued-line-height:  1.7;
+}
+
+:lang(en) {
+  --ued-font-heading: var(--ued-font-en-heading, sans-serif), var(--ued-font-en-heading, sans-serif), var(--ued-font-en-fallback, sans-serif);
+  --ued-font-body:    var(--ued-font-en-body, sans-serif),    var(--ued-font-en-body, sans-serif),    var(--ued-font-en-fallback, sans-serif);
+  --ued-line-height:  1.5;
+}
+
+:lang(zh-Hans) {
+  --ued-font-heading: var(--ued-font-zh-Hans-heading, sans-serif), var(--ued-font-en-heading, sans-serif), var(--ued-font-zh-Hans-fallback, sans-serif);
+  --ued-font-body:    var(--ued-font-zh-Hans-body, sans-serif),    var(--ued-font-en-body, sans-serif),    var(--ued-font-zh-Hans-fallback, sans-serif);
+  --ued-line-height:  1.7;
+}

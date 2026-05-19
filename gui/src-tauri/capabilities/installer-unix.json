@@ -1,13 +1,32 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "installer-unix",
-  "description": "Unix installer permissions",
+  "description": "Unix installer permissions: spawn bash for install/uninstall scripts; read claw-installer manifest.",
   "platforms": ["macOS", "linux"],
   "windows": ["main"],
   "permissions": [
-    "shell:allow-execute",
+    {
+      "identifier": "shell:allow-execute",
+      "allow": [
+        {
+          "name": "bash",
+          "cmd": "bash",
+          "args": true,
+          "sidecar": false
+        }
+      ]
+    },
     "shell:allow-kill",
     "fs:allow-read-text-file",
-    "os:allow-platform"
+    "os:allow-platform",
+    {
+      "identifier": "opener:allow-open-path",
+      "allow": [{ "path": "**" }]
+    },
+    {
+      "identifier": "opener:allow-reveal-item-in-dir",
+      "allow": [{ "path": "**" }]
+    },
+    "clipboard-manager:allow-write-text"
   ]
 }

@@ -41,6 +41,24 @@ export async function cancelInstaller(): Promise<void> {
   return invoke("cancel_installer");
 }
 
+/** Copy plain text to the system clipboard via Tauri's clipboard plugin. */
+export async function copyToClipboard(text: string): Promise<void> {
+  const { writeText } = await import("@tauri-apps/plugin-clipboard-manager");
+  await writeText(text);
+}
+
+/** Open a file or directory using the platform's default handler. */
+export async function openPath(path: string): Promise<void> {
+  const { openPath: open } = await import("@tauri-apps/plugin-opener");
+  await open(path);
+}
+
+/** Reveal a file in Finder / Explorer / file manager (selects it). */
+export async function revealInFolder(path: string): Promise<void> {
+  const { revealItemInDir } = await import("@tauri-apps/plugin-opener");
+  await revealItemInDir(path);
+}
+
 export async function runUninstaller(
   agent: string,
   onEvent: (e: InstallerEvent) => void
@@ -48,4 +66,20 @@ export async function runUninstaller(
   const ch = new Channel<InstallerEvent>();
   ch.onmessage = onEvent;
   return invoke("run_uninstaller", { agent, onEvent: ch });
+}
+
+/** Run an agent lifecycle action (start / stop / restart) via shell. */
+export async function runServiceAction(
+  agent: string,
+  action: "start" | "stop" | "restart",
+  onEvent: (e: InstallerEvent) => void
+): Promise<void> {
+  const ch = new Channel<InstallerEvent>();
+  ch.onmessage = onEvent;
+  return invoke("run_service_action", { agent, action, onEvent: ch });
+}
+
+/** Trigger an immediate system reboot (Windows only). Returns Err on non-Windows. */
+export async function systemReboot(): Promise<void> {
+  return invoke("system_reboot");
 }

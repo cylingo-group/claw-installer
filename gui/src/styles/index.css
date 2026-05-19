@@ -45,3 +45,21 @@
 .ued-indeterminate-bar {
   animation: ued-indeterminate 1.4s cubic-bezier(0.4, 0, 0.2, 1) infinite;
 }
+
+/* Minimal scrollbar for the log panel (and any other element opting in). */
+.ued-scroll-thin {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 0, 0, 0.18) transparent;
+}
+.ued-scroll-thin::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.ued-scroll-thin::-webkit-scrollbar-track { background: transparent; }
+.ued-scroll-thin::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.18);
+  border-radius: 3px;
+}
+.ued-scroll-thin::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.32);
+}

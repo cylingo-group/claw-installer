@@ -1,0 +1,12 @@
+{
+  "locales": [
+    "en",
+    "zh-Hans"
+  ],
+  "primaryLocale": "zh-Hans",
+  "layout": "dashboard-sidebar",
+  "palette": "graphite",
+  "typography": "neutral-modern",
+  "visualStyle": "minimal",
+  "submittedAt": "2026-05-18T13:51:51.458Z"
+}

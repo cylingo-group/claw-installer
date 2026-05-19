@@ -8,11 +8,13 @@ and spawns the same entry points end-users invoke directly.
 ## Layout
 
 ```
-installer/                        CLI installers (shell + PS bootstrap)
+shell/                            CLI implementation: install + lifecycle + uninstall
 ├─ install.sh                     top-level: env deps + every agent
-├─ install-openclaw.sh            openclaw agent (pnpm-based)
-├─ install-hermes.sh              hermes agent (delegates to upstream install.sh)
 ├─ uninstall.sh                   reverses what we installed, per the manifest
+│                                  (honors CLAW_UNINSTALL_AGENT for per-agent mode)
+├─ agents/                        per-agent lifecycle scripts
+│   ├─ openclaw/{install,start,stop,restart,uninstall}.sh
+│   └─ hermes/{install,start,stop,restart,uninstall}.sh
 ├─ lib/                           shared helpers + manifest plumbing
 │   ├─ common.sh
 │   └─ manifest.sh
@@ -30,19 +32,21 @@ installer/                        CLI installers (shell + PS bootstrap)
     ├─ docker-compose.yml
     └─ docker-entrypoint.sh
 
-gui/                              Tauri-based installer GUI (in progress)
+gui/                              Tauri-based GUI (drives the shell/ scripts)
 ```
 
 ## Entry points
 
-| Platform        | Command                                                                |
-| --------------- | ---------------------------------------------------------------------- |
-| macOS / Linux   | `./installer/install.sh`                                               |
-| WSL 2           | `./installer/install.sh` (same as Linux)                               |
-| Windows (1-click) | `powershell -ExecutionPolicy Bypass -File installer\windows\bootstrap.ps1` |
-| Single agent    | `./installer/install-openclaw.sh` or `./installer/install-hermes.sh`   |
-| Uninstall       | `./installer/uninstall.sh` (add `--dry-run` to preview)                |
-| Docker smoke    | `cd installer/docker && docker compose up --build`                     |
+| Platform        | Command                                                                       |
+| --------------- | ----------------------------------------------------------------------------- |
+| macOS / Linux   | `./shell/install.sh`                                                          |
+| WSL 2           | `./shell/install.sh` (same as Linux)                                          |
+| Windows (1-click) | `powershell -ExecutionPolicy Bypass -File shell\windows\bootstrap.ps1`      |
+| Single agent    | `./shell/agents/openclaw/install.sh` or `./shell/agents/hermes/install.sh`    |
+| Lifecycle       | `./shell/agents/<agent>/{start,stop,restart}.sh`                              |
+| Uninstall (all) | `./shell/uninstall.sh` (add `--dry-run` to preview)                           |
+| Uninstall (one) | `./shell/agents/<agent>/uninstall.sh`                                         |
+| Docker smoke    | `cd shell/docker && docker compose up --build`                                |
 
 ## Install state
 
@@ -108,8 +112,8 @@ forwards it as `LogLine` events for the GUI to surface):
 Rust pre-creates `$TMPDIR/claw-installer/<install|uninstall>-<ts>.log`, then
 passes `CLAW_SESSION_LOG=<path>` to the child process. Scripts open `fd 3`
 appending to this file when `common.sh` is sourced. Child agent scripts
-(`install-openclaw.sh`, `install-hermes.sh`) inherit `CLAW_SESSION_LOG` from
-the parent `install.sh` and append to the same file.
+(`agents/<agent>/install.sh`) inherit `CLAW_SESSION_LOG` from the parent
+`install.sh` and append to the same file.
 
 ### Debug mode
 
@@ -117,7 +121,7 @@ Pass `--debug` to any entry-point script to tail the session log to stderr in
 real time:
 
 ```bash
-./installer/install.sh --debug
+./shell/install.sh --debug
 ```
 
 This starts `tail -F "$CLAW_SESSION_LOG" >&2 &` in the background and kills it
@@ -126,8 +130,8 @@ on EXIT. Useful for CLI triage when you want to see the full forensic output.
 ### INSTALLER_* env vars
 
 The GUI configures behavior via `INSTALLER_*` environment variables and spawns
-one of the entry points above. See each `install-<agent>.sh` header for the
-full list of supported variables.
+one of the entry points above. See each `agents/<agent>/install.sh` header for
+the full list of supported variables.
 
 | Variable                          | Effect                                                    |
 | --------------------------------- | --------------------------------------------------------- |
@@ -139,7 +143,7 @@ full list of supported variables.
 | `INSTALLER_HERMES_SKIP_BROWSER=1`  | Skip Playwright/Chromium install                          |
 | `INSTALLER_FORCE_REINSTALL=1`      | Bypass all "already installed" fast-paths and redo everything |
 | `INSTALLER_WSL_DISTRO`             | (Windows) override WSL distro (default: Ubuntu)           |
-| `INSTALLER_REPO_DIR`               | (Windows) override path to the installer/ checkout        |
+| `INSTALLER_REPO_DIR`               | Override path to the `shell/` checkout (used by the Rust backend in dev mode) |
 
 ## Re-runs are idempotent
 

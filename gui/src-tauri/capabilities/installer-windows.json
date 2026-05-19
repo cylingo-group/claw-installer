@@ -1,13 +1,38 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "installer-windows",
-  "description": "Windows installer permissions",
+  "description": "Windows installer permissions: spawn powershell.exe to run bootstrap.ps1 (which itself drives WSL).",
   "platforms": ["windows"],
   "windows": ["main"],
   "permissions": [
-    "shell:allow-execute",
+    {
+      "identifier": "shell:allow-execute",
+      "allow": [
+        {
+          "name": "powershell.exe",
+          "cmd": "powershell.exe",
+          "args": true,
+          "sidecar": false
+        },
+        {
+          "name": "shutdown.exe",
+          "cmd": "shutdown.exe",
+          "args": ["/r", "/t", "0"],
+          "sidecar": false
+        }
+      ]
+    },
     "shell:allow-kill",
     "fs:allow-read-text-file",
-    "os:allow-platform"
+    "os:allow-platform",
+    {
+      "identifier": "opener:allow-open-path",
+      "allow": [{ "path": "**" }]
+    },
+    {
+      "identifier": "opener:allow-reveal-item-in-dir",
+      "allow": [{ "path": "**" }]
+    },
+    "clipboard-manager:allow-write-text"
   ]
 }

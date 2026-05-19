@@ -8,8 +8,8 @@ export default defineConfig({
   resolve: {
     alias: { "@": path.resolve(__dirname, "./src") },
   },
-  // Tauri dev server: use port 5173, do not open browser
-  server: { port: 5173, strictPort: true },
+  // Tauri dev server: use port 6520 (avoid clashing with other projects' default 5173)
+  server: { port: 6520, strictPort: true },
   // Required for Tauri: prevent Vite from obscuring Rust errors
   clearScreen: false,
   envPrefix: ["VITE_", "TAURI_"],

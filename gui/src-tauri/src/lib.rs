@@ -14,8 +14,8 @@ pub fn run() {
     if std::env::var("INSTALLER_REPO_DIR").is_err() {
         eprintln!(
             "[claw-installer] WARNING: INSTALLER_REPO_DIR is not set. \
-             The Rust backend will use resource_dir to find installer scripts. \
-             In dev mode, set INSTALLER_REPO_DIR=<path>/installer to point \
+             The Rust backend will use resource_dir to find shell scripts. \
+             In dev mode, set INSTALLER_REPO_DIR=<path>/shell to point \
              at the working copy."
         );
     }
@@ -24,6 +24,8 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_os::init())
+        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .manage(AppState {
             child: Arc::new(Mutex::new(None)),
         })
@@ -33,6 +35,8 @@ pub fn run() {
             commands::run_installer,
             commands::cancel_installer,
             commands::run_uninstaller,
+            commands::run_service_action,
+            commands::system_reboot,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -33,9 +33,10 @@ pub struct AppState {
     pub child: Arc<Mutex<Option<CommandChild>>>,
 }
 
-/// Resolve the installer directory.
+/// Resolve the shell-scripts directory (install / start / stop / restart /
+/// uninstall live here).
 /// In dev: use INSTALLER_REPO_DIR env var.
-/// In prod: use {resource_dir}/installer/.
+/// In prod: use {resource_dir}/shell/.
 fn resolve_installer_dir(app: &tauri::AppHandle) -> PathBuf {
     if let Ok(repo_dir) = std::env::var("INSTALLER_REPO_DIR") {
         return PathBuf::from(repo_dir);
@@ -43,7 +44,7 @@ fn resolve_installer_dir(app: &tauri::AppHandle) -> PathBuf {
     app.path()
         .resource_dir()
         .expect("resource_dir unavailable")
-        .join("installer")
+        .join("shell")
 }
 
 /// Resolve a specific installer file path.
@@ -194,29 +195,43 @@ fn build_command(
     #[cfg(target_os = "windows")]
     {
         let ps_path = resolve_installer_path(app, r"windows\bootstrap.ps1");
-        shell
-            .command("powershell.exe")
-            .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", &ps_path.to_string_lossy().to_string()])
+        let mut args = vec![
+            "-NoProfile".to_string(),
+            "-ExecutionPolicy".to_string(),
+            "Bypass".to_string(),
+            "-File".to_string(),
+            ps_path.to_string_lossy().to_string(),
+        ];
+        if agents.len() == 1 {
+            args.push("-Agent".to_string());
+            args.push(agents[0].clone());
+        }
+        shell.command("powershell.exe").args(args)
     }
 
     #[cfg(not(target_os = "windows"))]
     {
-        let script = if agents.len() == 1 && agents[0] == "openclaw" {
-            resolve_installer_path(app, "install-openclaw.sh")
-        } else if agents.len() == 1 && agents[0] == "hermes" {
-            resolve_installer_path(app, "install-hermes.sh")
+        let script = if agents.len() == 1 {
+            // Single-agent install → per-agent script under agents/<agent>/install.sh.
+            // The script handles its own env-deps via run_steps(ENV_STEPS).
+            resolve_installer_path(app, &format!("agents/{}/install.sh", agents[0]))
         } else {
+            // Multi-agent or unspecified → top-level orchestrator.
             resolve_installer_path(app, "install.sh")
         };
         shell.command("bash").args([script.to_string_lossy().to_string()])
     }
 }
 
-fn build_uninstall_command(app: &tauri::AppHandle) -> tauri_plugin_shell::process::Command {
+fn build_uninstall_command(
+    app: &tauri::AppHandle,
+    agent: &str,
+) -> tauri_plugin_shell::process::Command {
     let shell = app.shell();
 
     #[cfg(target_os = "windows")]
     {
+        let _ = agent;
         let ps_path = resolve_installer_path(app, r"windows\bootstrap.ps1");
         shell.command("powershell.exe").args([
             "-NoProfile".to_string(),
@@ -230,28 +245,77 @@ fn build_uninstall_command(app: &tauri::AppHandle) -> tauri_plugin_shell::proces
 
     #[cfg(not(target_os = "windows"))]
     {
-        let script = resolve_installer_path(app, "uninstall.sh");
+        // Per-agent uninstall — only reverses that agent's manifest rows.
+        // Empty/unknown agent falls back to the top-level full uninstall.
+        let script = if agent == "openclaw" || agent == "hermes" {
+            resolve_installer_path(app, &format!("agents/{}/uninstall.sh", agent))
+        } else {
+            resolve_installer_path(app, "uninstall.sh")
+        };
         shell.command("bash").args([script.to_string_lossy().to_string(), "--yes".to_string()])
     }
+}
+
+/// Build a command for an agent service lifecycle action (start/stop/restart).
+/// On Windows: spawns bootstrap.ps1 with -Service / -Agent args.
+/// On non-Windows: runs agents/<agent>/<action>.sh via bash.
+fn build_service_command(
+    app: &tauri::AppHandle,
+    agent: &str,
+    action: &str,
+) -> tauri_plugin_shell::process::Command {
+    let shell = app.shell();
+
+    #[cfg(target_os = "windows")]
+    {
+        let ps_path = resolve_installer_path(app, r"windows\bootstrap.ps1");
+        shell.command("powershell.exe").args([
+            "-NoProfile".to_string(),
+            "-ExecutionPolicy".to_string(),
+            "Bypass".to_string(),
+            "-File".to_string(),
+            ps_path.to_string_lossy().to_string(),
+            "-Service".to_string(),
+            action.to_string(),
+            "-Agent".to_string(),
+            agent.to_string(),
+        ])
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let script = resolve_installer_path(app, &format!("agents/{}/{}.sh", agent, action));
+        shell.command("bash").args([script.to_string_lossy().to_string()])
+    }
+}
+
+/// Parse a `@@reboot:<kind>` sentinel line. Returns the kind string on match.
+/// Consistent with the `@@step:` sentinel pattern in `parse_step_sentinel`.
+fn parse_reboot_sentinel(line: &str) -> Option<String> {
+    let line = line.trim();
+    let rest = line.strip_prefix("@@reboot:")?;
+    if rest.is_empty() {
+        return None;
+    }
+    Some(rest.to_string())
 }
 
 /// Run the event loop for a spawned child process.
 ///
 /// Passthrough contract (two-stream logging):
 /// - **stdout**: Every line is forwarded verbatim as `LogLine` UNLESS it matches
-///   the `@@step:<key>:<label>` sentinel, in which case `StepChanged` is emitted
-///   and the line is NOT forwarded as `LogLine`. No filtering, no ANSI stripping,
-///   no translation table — scripts author exactly what the user sees.
-/// - **stderr**: Discarded. Under the new contract, scripts write nothing to
-///   stderr (log details go to fd 3, the session log file). Forwarding stderr
-///   would expose internal noise to the GUI.
-/// - **Session log**: Written by the bash scripts themselves via fd 3. Rust does
-///   not write to the log file — it only passes `CLAW_SESSION_LOG` to the child.
+///   the `@@step:<key>:<label>` sentinel or `@@reboot:<kind>` sentinel, in which
+///   case the appropriate event is emitted and the line is NOT forwarded as `LogLine`.
+/// - **stderr**: Discarded.
+/// - **Session log**: Written by the bash scripts themselves via fd 3.
 async fn run_event_loop(
     mut rx: Receiver<CommandEvent>,
     on_event: tauri::ipc::Channel<InstallerEvent>,
     child_state: Arc<Mutex<Option<CommandChild>>>,
 ) {
+    // Tracks the last @@reboot:<kind> sentinel seen before exit code 2.
+    let mut reboot_kind: Option<String> = None;
+
     loop {
         match rx.recv().await {
             Some(CommandEvent::Stdout(bytes)) => {
@@ -267,14 +331,19 @@ async fn run_event_loop(
                         continue;
                     }
 
-                    // Check for @@step: sentinel FIRST — consume it as StepChanged.
+                    // @@reboot:<kind> — consumed silently; stored for exit-code-2 dispatch.
+                    if let Some(kind) = parse_reboot_sentinel(&line) {
+                        reboot_kind = Some(kind);
+                        continue;
+                    }
+
+                    // @@step:<key>:<label> — consumed as StepChanged.
                     if let Some((key, label)) = parse_step_sentinel(&line) {
                         let _ = on_event.send(InstallerEvent::StepChanged {
                             key,
                             label,
                             detail: String::new(),
                         });
-                        // Do NOT forward as LogLine.
                         continue;
                     }
 
@@ -284,30 +353,38 @@ async fn run_event_loop(
             }
 
             Some(CommandEvent::Stderr(_bytes)) => {
-                // Discard stderr. Scripts write user-visible content to stdout
-                // (via display()) and technical details to fd 3 (session log).
-                // Forwarding stderr would expose internal noise to the GUI.
-                // Internal debug logging would go here if the tracing crate is added.
+                // Discard stderr per two-stream logging contract.
             }
 
             Some(CommandEvent::Terminated(payload)) => {
                 *child_state.lock().await = None;
-                let success = payload.code == Some(0);
-                if success {
-                    let _ = on_event.send(InstallerEvent::StepChanged {
-                        key: "done".to_string(),
-                        label: "✓ 完成".to_string(),
-                        detail: String::new(),
-                    });
+                match payload.code {
+                    Some(0) => {
+                        let _ = on_event.send(InstallerEvent::StepChanged {
+                            key: "done".to_string(),
+                            label: "✓ 完成".to_string(),
+                            detail: String::new(),
+                        });
+                        let _ = on_event.send(InstallerEvent::Finished {
+                            success: true,
+                            message: None,
+                        });
+                    }
+                    Some(2) => {
+                        // Script signals reboot required (WSL feature or distro first-run).
+                        // kind was set by the @@reboot:<kind> sentinel emitted before exit.
+                        let kind = reboot_kind
+                            .take()
+                            .unwrap_or_else(|| "wsl-feature".to_string());
+                        let _ = on_event.send(InstallerEvent::RebootRequired { kind });
+                    }
+                    code => {
+                        let _ = on_event.send(InstallerEvent::Finished {
+                            success: false,
+                            message: Some(format!("脚本退出码 {}", code.unwrap_or(-1))),
+                        });
+                    }
                 }
-                let _ = on_event.send(InstallerEvent::Finished {
-                    success,
-                    message: if !success {
-                        Some(format!("脚本退出码 {}", payload.code.unwrap_or(-1)))
-                    } else {
-                        None
-                    },
-                });
                 break;
             }
 
@@ -357,9 +434,20 @@ pub async fn run_installer(
     });
 
     let mut cmd = build_command(&app, &agents);
-    // Forward caller-supplied env vars (INSTALLER_* overrides).
+    // Forward caller-supplied env vars (INSTALLER_* overrides). Expand leading
+    // "~/" against the user's home dir — bash variable assignment does not
+    // expand tilde, so the script would otherwise see the literal "~".
+    let home = app
+        .path()
+        .home_dir()
+        .ok()
+        .map(|p| p.to_string_lossy().to_string());
     for (k, v) in &env {
-        cmd = cmd.env(k, v);
+        let value = match (&home, v.strip_prefix("~/")) {
+            (Some(h), Some(rest)) => format!("{}/{}", h, rest),
+            _ => v.clone(),
+        };
+        cmd = cmd.env(k, value);
     }
     // Pass CLAW_SESSION_LOG so the bash script opens fd 3 against this path.
     cmd = cmd.env("CLAW_SESSION_LOG", log_path.to_string_lossy().as_ref());
@@ -412,8 +500,12 @@ pub async fn run_uninstaller(
         path: log_path.to_string_lossy().to_string(),
     });
 
-    let mut cmd = build_uninstall_command(&app);
+    let mut cmd = build_uninstall_command(&app, &_agent);
     cmd = cmd.env("CLAW_SESSION_LOG", log_path.to_string_lossy().as_ref());
+    #[cfg(target_os = "windows")]
+    if _agent == "openclaw" || _agent == "hermes" {
+        cmd = cmd.env("CLAW_UNINSTALL_AGENT", &_agent);
+    }
 
     let (rx, child) = match cmd.spawn() {
         Ok(r) => r,
@@ -428,4 +520,121 @@ pub async fn run_uninstaller(
     run_event_loop(rx, on_event, child_arc).await;
     eprintln!("[claw-installer] run_uninstaller: event loop finished");
     Ok(())
+}
+
+/// Run a service lifecycle action (start / stop / restart) for an agent.
+/// Dispatches to agents/<agent>/<action>.sh. Streams events the same way as
+/// run_installer / run_uninstaller. Validates agent + action against an
+/// allow-list before spawning anything so the script path can never be
+/// user-controlled beyond the fixed set.
+#[tauri::command]
+pub async fn run_service_action(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    agent: String,
+    action: String,
+    on_event: tauri::ipc::Channel<InstallerEvent>,
+) -> Result<(), String> {
+    match agent.as_str() {
+        "openclaw" | "hermes" => {}
+        _ => return Err(format!("unknown agent: {}", agent)),
+    }
+    match action.as_str() {
+        "start" | "stop" | "restart" => {}
+        _ => return Err(format!("unknown action: {}", action)),
+    }
+
+    let log_path = build_session_log_path(&format!("{}-{}", action, agent));
+    eprintln!(
+        "[claw-installer] run_service_action: agent={} action={} log={:?}",
+        agent, action, log_path
+    );
+    let _ = fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(false)
+        .open(&log_path);
+
+    let _ = on_event.send(InstallerEvent::LogPath {
+        path: log_path.to_string_lossy().to_string(),
+    });
+
+    let mut cmd = build_service_command(&app, &agent, &action);
+    cmd = cmd.env("CLAW_SESSION_LOG", log_path.to_string_lossy().as_ref());
+
+    let (rx, child) = match cmd.spawn() {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("[claw-installer] run_service_action spawn FAILED: {}", e);
+            return Err(e.to_string());
+        }
+    };
+    eprintln!("[claw-installer] run_service_action spawned pid={}", child.pid());
+    let child_arc = Arc::clone(&state.child);
+    *child_arc.lock().await = Some(child);
+    run_event_loop(rx, on_event, child_arc).await;
+    eprintln!("[claw-installer] run_service_action: event loop finished");
+    Ok(())
+}
+
+/// Trigger an immediate system reboot (Windows only).
+/// On non-Windows this returns an error so the frontend can handle it gracefully.
+#[cfg(target_os = "windows")]
+#[tauri::command]
+pub async fn system_reboot() -> Result<(), String> {
+    std::process::Command::new("shutdown")
+        .args(["/r", "/t", "0"])
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[cfg(not(target_os = "windows"))]
+#[tauri::command]
+pub async fn system_reboot() -> Result<(), String> {
+    Err("system_reboot is only supported on Windows".into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reboot_sentinel_parses_wsl_feature() {
+        assert_eq!(
+            parse_reboot_sentinel("@@reboot:wsl-feature"),
+            Some("wsl-feature".to_string())
+        );
+    }
+
+    #[test]
+    fn reboot_sentinel_parses_distro_firstrun() {
+        assert_eq!(
+            parse_reboot_sentinel("@@reboot:distro-firstrun"),
+            Some("distro-firstrun".to_string())
+        );
+    }
+
+    #[test]
+    fn reboot_sentinel_ignores_step_lines() {
+        assert_eq!(parse_reboot_sentinel("@@step:base-deps:label"), None);
+    }
+
+    #[test]
+    fn reboot_sentinel_ignores_plain_lines() {
+        assert_eq!(parse_reboot_sentinel("some log output"), None);
+    }
+
+    #[test]
+    fn reboot_sentinel_ignores_empty_kind() {
+        assert_eq!(parse_reboot_sentinel("@@reboot:"), None);
+    }
+
+    #[test]
+    fn reboot_sentinel_strips_leading_whitespace() {
+        assert_eq!(
+            parse_reboot_sentinel("  @@reboot:wsl-feature"),
+            Some("wsl-feature".to_string())
+        );
+    }
 }
