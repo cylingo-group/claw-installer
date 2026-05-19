@@ -11,9 +11,10 @@ source "$__STEP_DIR/../lib/common.sh"
 
 step_system_tools() {
   : "${PLATFORM:?PLATFORM not set — call detect_platform first}"
+  display "@@step:system-tools:正在安装系统工具（ripgrep / ffmpeg）…"
   case "$PLATFORM" in
     macos)
-      command -v brew >/dev/null 2>&1 || die "Homebrew required on macOS."
+      command -v brew >/dev/null 2>&1 || die_step "安装系统工具" "Homebrew required on macOS." 1
       local want=(ripgrep ffmpeg)
       local missing=() bin pkg
       for pkg in "${want[@]}"; do
@@ -26,39 +27,61 @@ step_system_tools() {
       done
       if [[ ${#missing[@]} -gt 0 ]]; then
         log "brew install: ${missing[*]}"
-        brew install "${missing[@]}"
+        run brew install "${missing[@]}"
         for pkg in "${missing[@]}"; do
           manifest_record system_pkg "$pkg" brew_installed "brew"
         done
       else
-        log "system-tools already present"
+        display "系统工具已就绪，跳过安装"
       fi
       ;;
     debian)
       # ripgrep + ffmpeg + the Debian build chain hermes checks for via
       # `dpkg -s gcc && dpkg -s python3-dev && dpkg -s libffi-dev`.
       local pkgs=(ripgrep ffmpeg build-essential python3-dev libffi-dev)
-      log "apt-get install: ${pkgs[*]}"
-      run_as_root apt-get update -y
-      run_as_root apt-get install -y --no-install-recommends "${pkgs[@]}"
-      local p
+      local missing=() p
       for p in "${pkgs[@]}"; do
-        manifest_record system_pkg "$p" apt_shared "apt-get"
+        if dpkg -s "$p" >/dev/null 2>&1; then
+          manifest_record system_pkg "$p" preexisting "apt-get"
+        else
+          missing+=("$p")
+        fi
       done
+      if [[ ${#missing[@]} -gt 0 ]]; then
+        log "apt-get install: ${missing[*]}"
+        run run_as_root apt-get update -y
+        run run_as_root apt-get install -y --no-install-recommends "${missing[@]}"
+        for p in "${missing[@]}"; do
+          manifest_record system_pkg "$p" apt_shared "apt-get"
+        done
+      else
+        display "系统工具已就绪，跳过安装"
+      fi
       ;;
     rhel)
       local pm
       pm="$(command -v dnf || command -v yum)"
       # RHEL package names differ for the build chain.
       local pkgs=(ripgrep ffmpeg gcc python3-devel libffi-devel)
-      log "$pm install: ${pkgs[*]}"
-      run_as_root "$pm" install -y "${pkgs[@]}"
-      local p
+      local missing=() p
       for p in "${pkgs[@]}"; do
-        manifest_record system_pkg "$p" rhel_shared "$(basename "$pm")"
+        if rpm -q "$p" >/dev/null 2>&1; then
+          manifest_record system_pkg "$p" preexisting "$(basename "$pm")"
+        else
+          missing+=("$p")
+        fi
       done
+      if [[ ${#missing[@]} -gt 0 ]]; then
+        log "$pm install: ${missing[*]}"
+        run run_as_root "$pm" install -y "${missing[@]}"
+        for p in "${missing[@]}"; do
+          manifest_record system_pkg "$p" rhel_shared "$(basename "$pm")"
+        done
+      else
+        display "系统工具已就绪，跳过安装"
+      fi
       ;;
-    *) die "Unknown PLATFORM: $PLATFORM" ;;
+    *) die_step "安装系统工具" "Unknown PLATFORM: $PLATFORM" 1 ;;
   esac
 }
 

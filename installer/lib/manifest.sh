@@ -2,10 +2,14 @@
 # lib/manifest.sh — record the side effects of an install run so uninstall.sh
 # can reverse exactly what we did (and skip what was already on the host).
 # Sourced by lib/common.sh.
+#
+# NOTE: setup_install_log() has been removed. The session log is managed
+# entirely via the CLAW_SESSION_LOG env var set by Rust (or auto-generated
+# as a fallback in common.sh). CLAW_INSTALL_LOG is deprecated and unused.
 
 # State dir is intentionally separate from ~/.openclaw — that directory
 # belongs to the openclaw runtime and may be wiped/recreated by it. We need
-# our manifest + install logs to survive across openclaw resets.
+# our manifest to survive across openclaw resets.
 export CLAW_STATE_DIR="${CLAW_STATE_DIR:-$HOME/.claw-installer}"
 export CLAW_MANIFEST="${CLAW_MANIFEST:-$CLAW_STATE_DIR/manifest.tsv}"
 
@@ -17,6 +21,7 @@ manifest_init() {
       echo "# fields: timestamp<TAB>action<TAB>target<TAB>status<TAB>note"
     } > "$CLAW_MANIFEST"
   fi
+  log "Manifest: $CLAW_MANIFEST"
 }
 
 # manifest_record <action> <target> [status] [note]
@@ -42,19 +47,4 @@ manifest_query() {
   local action="$1"
   [[ -f "$CLAW_MANIFEST" ]] || return 0
   awk -F'\t' -v a="$action" '$2==a { print $3 "\t" $4 "\t" $5 }' "$CLAW_MANIFEST"
-}
-
-# Set up tee'd install log for this run. Idempotent: if CLAW_INSTALL_LOG is
-# already exported (parent installer set it up), reuse it.
-setup_install_log() {
-  if [[ -n "${CLAW_INSTALL_LOG:-}" ]]; then
-    return 0
-  fi
-  manifest_init
-  local ts
-  ts="$(date -u +%Y%m%dT%H%M%SZ)"
-  export CLAW_INSTALL_LOG="$CLAW_STATE_DIR/install-$ts.log"
-  exec > >(tee -a "$CLAW_INSTALL_LOG") 2>&1
-  log "Install log: $CLAW_INSTALL_LOG"
-  log "Manifest:    $CLAW_MANIFEST"
 }

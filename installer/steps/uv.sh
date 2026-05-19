@@ -10,15 +10,18 @@ __STEP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$__STEP_DIR/../lib/common.sh"
 
 step_uv() {
+  display "@@step:uv:正在安装 uv（Python 包管理器）…"
   local uv_bin="$HOME/.local/bin/uv"
   if command -v uv >/dev/null 2>&1; then
     log "uv already on PATH: $(uv --version 2>/dev/null || echo unknown) ($(command -v uv))"
+    display "uv 已就绪：$(uv --version 2>/dev/null || echo unknown)"
     manifest_record uv_binary "$(command -v uv)" preexisting
     return
   fi
   if [[ -x "$uv_bin" ]]; then
     log "uv already at $uv_bin"
     export PATH="$HOME/.local/bin:$PATH"
+    display "uv 已就绪：$uv_bin"
     manifest_record uv_binary "$uv_bin" preexisting
     return
   fi
@@ -27,12 +30,12 @@ step_uv() {
   # need its PATH block because: (a) hermes's installer also writes its own
   # ~/.local/bin PATH line, and (b) our shell-rc step doesn't run for the
   # hermes-only path. Users still get the binary at a stable, on-PATH location.
-  curl -LsSf https://astral.sh/uv/install.sh \
-    | env UV_INSTALLER_NO_MODIFY_PATH=1 sh </dev/null
+  run bash -c 'curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALLER_NO_MODIFY_PATH=1 sh' </dev/null
   export PATH="$HOME/.local/bin:$PATH"
   hash -r 2>/dev/null || true
-  command -v uv >/dev/null 2>&1 || die "uv not on PATH after install (looked in $uv_bin)"
+  command -v uv >/dev/null 2>&1 || die_step "安装 uv" "uv not on PATH after install (looked in $uv_bin)" 1
   log "uv installed: $(uv --version) at $uv_bin"
+  display "✓ uv 已安装：$(uv --version)"
   manifest_record uv_binary "$uv_bin" installed
 }
 

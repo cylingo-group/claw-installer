@@ -16,6 +16,7 @@ __STEP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$__STEP_DIR/../lib/common.sh"
 
 step_hermes_node() {
+  display "@@step:hermes-node:正在配置 Hermes 专属 Node 运行时…"
   local hermes_home="${INSTALLER_HERMES_HOME:-${HERMES_HOME:-$HOME/.hermes}}"
   local node_dir="$hermes_home/node"
   local node_bin="$node_dir/bin/node"
@@ -24,6 +25,7 @@ step_hermes_node() {
   # of us, or hermes itself) — upstream check #2 will accept it.
   if [[ -x "$node_bin" ]]; then
     log "Node already at $node_bin (version: $("$node_bin" --version 2>/dev/null || echo ?))"
+    display "Hermes 专属 Node 已就绪，跳过配置"
     manifest_record hermes_node_symlink "$node_dir" preexisting
     return
   fi
@@ -35,12 +37,13 @@ step_hermes_node() {
   if command -v node >/dev/null 2>&1; then
     if node -e 'process.exit(process.versions.node.split(".").map(Number)[0] >= 22 ? 0 : 1)' 2>/dev/null; then
       log "PATH already has Node $(node --version) (>= 22); leaving hermes' Node detection to upstream"
+      display "PATH 上的 Node $(node --version) 满足 Hermes 要求，跳过专属 Node 配置"
       manifest_record hermes_node_symlink "$node_dir" preexisting "system Node $(node --version) satisfies upstream check"
       return
     fi
   fi
 
-  command -v fnm >/dev/null 2>&1 || die "fnm not on PATH — run steps/fnm.sh first"
+  command -v fnm >/dev/null 2>&1 || die_step "配置 Hermes Node" "fnm not on PATH — run steps/fnm.sh first" 1
 
   # Ensure fnm has Node v22 (the version hermes expects).
   local node22_status="installed"
@@ -49,7 +52,7 @@ step_hermes_node() {
     log "fnm already has Node v22"
   else
     log "Installing Node v22 via fnm"
-    fnm install 22
+    run fnm install 22
   fi
   manifest_record fnm_node 22 "$node22_status" "for hermes"
 
@@ -58,7 +61,7 @@ step_hermes_node() {
   # fnm-internal layout.
   local node22_path node22_bindir
   node22_path="$(fnm exec --using=22 -- node -e 'process.stdout.write(process.execPath)')"
-  [[ -x "$node22_path" ]] || die "Could not resolve fnm Node v22 binary (got: '$node22_path')"
+  [[ -x "$node22_path" ]] || die_step "配置 Hermes Node" "Could not resolve fnm Node v22 binary (got: '$node22_path')" 1
   node22_bindir="$(dirname "$node22_path")"
   log "fnm Node v22 binary: $node22_path"
 
@@ -74,6 +77,7 @@ step_hermes_node() {
     fi
   done
   log "Symlinked $node_dir/bin/{node,npm,npx} → $node22_bindir"
+  display "✓ Hermes 专属 Node v22 已配置"
   manifest_record hermes_node_symlink "$node_dir" installed "→ $node22_bindir"
 }
 

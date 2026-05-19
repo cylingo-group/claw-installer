@@ -9,6 +9,7 @@
 # Flags:
 #   --dry-run            Show the plan, change nothing.
 #   --yes                Skip the confirmation prompt.
+#   --debug              Tail the session log to stderr in real time.
 #   --purge-workspace    Also delete openclaw_workspace entries
 #                         (default: keep — workspace may hold user data).
 #   --purge-hermes-home  Also delete the hermes_home dir ($HERMES_HOME)
@@ -27,32 +28,35 @@ ASSUME_YES=0
 PURGE_WORKSPACE=0
 PURGE_HERMES_HOME=0
 KEEP_MANIFEST=0
+DEBUG_MODE=0
 
 for arg in "$@"; do
   case "$arg" in
     --dry-run)            DRY_RUN=1 ;;
     --yes|-y)             ASSUME_YES=1 ;;
+    --debug)              DEBUG_MODE=1 ;;
     --purge-workspace)    PURGE_WORKSPACE=1 ;;
     --purge-hermes-home)  PURGE_HERMES_HOME=1 ;;
     --purge-all)          PURGE_WORKSPACE=1; PURGE_HERMES_HOME=1 ;;
     --keep-manifest)      KEEP_MANIFEST=1 ;;
     -h|--help)
-      sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'
       exit 0
       ;;
-    *) die "Unknown flag: $arg (try --help)" ;;
+    *) die_step "参数解析" "Unknown flag: $arg (try --help)" 1 ;;
   esac
 done
 
-[[ -f "$CLAW_MANIFEST" ]] || die "No manifest at $CLAW_MANIFEST — nothing to uninstall (or installer never ran)."
+[[ -f "$CLAW_MANIFEST" ]] \
+  || die_step "卸载准备" "No manifest at $CLAW_MANIFEST — nothing to uninstall (or installer never ran)." 1
 
 # run_cmd <cmd...>  — execute or just print under --dry-run
 run_cmd() {
   if (( DRY_RUN )); then
-    printf '  [dry-run] %s\n' "$*"
+    display "  [dry-run] $*"
   else
     log "  $*"
-    "$@" || warn "  (command failed — continuing)"
+    run "$@" || log "  (command failed — continuing)"
   fi
 }
 
@@ -61,7 +65,7 @@ strip_sentinel_block() {
   local rc="$1" b="$2" e="$3"
   [[ -f "$rc" ]] || { log "  (already gone: $rc)"; return; }
   if (( DRY_RUN )); then
-    printf '  [dry-run] strip managed block from %s\n' "$rc"
+    display "  [dry-run] strip managed block from $rc"
     return
   fi
   local tmp
@@ -86,128 +90,128 @@ rows_reverse() {
 declare -a SYSTEM_PKG_NOTES=()
 
 plan_summary() {
-  # Colored action tags. All padded to 6 chars between brackets so columns
-  # line up. Colors disabled automatically when stdout isn't a TTY.
+  display "@@step:uninstall-plan:正在生成卸载计划…"
   local C_RESET='' T_REMOVE='[remove]' T_STRIP='[strip ]' T_KEEP='[keep  ]'
   local T_SKIP='[skip  ]' T_NOTE='[note  ]' T_UNK='[?unkwn]'
   if [[ -t 1 ]]; then
     C_RESET=$'\033[0m'
-    T_REMOVE=$'\033[1;31m[remove]'"$C_RESET"   # red
-    T_STRIP=$'\033[1;33m[strip ]'"$C_RESET"    # yellow
-    T_KEEP=$'\033[1;32m[keep  ]'"$C_RESET"     # green
-    T_SKIP=$'\033[1;30m[skip  ]'"$C_RESET"     # dim grey
-    T_NOTE=$'\033[1;36m[note  ]'"$C_RESET"     # cyan
-    T_UNK=$'\033[1;35m[?unkwn]'"$C_RESET"      # magenta
+    T_REMOVE=$'\033[1;31m[remove]'"$C_RESET"
+    T_STRIP=$'\033[1;33m[strip ]'"$C_RESET"
+    T_KEEP=$'\033[1;32m[keep  ]'"$C_RESET"
+    T_SKIP=$'\033[1;30m[skip  ]'"$C_RESET"
+    T_NOTE=$'\033[1;36m[note  ]'"$C_RESET"
+    T_UNK=$'\033[1;35m[?unkwn]'"$C_RESET"
   fi
 
-  echo
-  echo "Will reverse the following recorded actions (newest first):"
-  echo "  Manifest:           $CLAW_MANIFEST"
-  echo "  Purge workspace?    $(( PURGE_WORKSPACE )) (use --purge-workspace to enable)"
-  echo "  Purge hermes-home?  $(( PURGE_HERMES_HOME )) (use --purge-hermes-home to enable)"
-  echo
-  while IFS=$'\t' read -r ts action target status note; do
+  display ""
+  display "将按以下计划卸载（最新优先）："
+  display "  Manifest:           $CLAW_MANIFEST"
+  display "  Purge workspace?    $(( PURGE_WORKSPACE )) (use --purge-workspace to enable)"
+  display "  Purge hermes-home?  $(( PURGE_HERMES_HOME )) (use --purge-hermes-home to enable)"
+  display ""
+  while IFS=$'\t' read -r _ts action target status _note; do
     case "$action" in
       system_pkg)
-        printf '  %s system pkg %-20s (%s) — left in place\n' "$T_SKIP" "$target" "$status"
+        display "  $T_SKIP system pkg $target ($status) — left in place"
         ;;
       fnm_binary)
         if [[ "$status" == "preexisting" ]]; then
-          printf '  %s fnm at %s (preexisting)\n' "$T_SKIP" "$target"
+          display "  $T_SKIP fnm at $target (preexisting)"
         else
-          printf '  %s fnm dir %s\n' "$T_REMOVE" "$target"
+          display "  $T_REMOVE fnm dir $target"
         fi
         ;;
       fnm_node)
         if [[ "$status" == "preexisting" ]]; then
-          printf '  %s node v%s (preexisting)\n' "$T_SKIP" "$target"
+          display "  $T_SKIP node v$target (preexisting)"
         else
-          printf '  %s fnm node v%s\n' "$T_REMOVE" "$target"
+          display "  $T_REMOVE fnm node v$target"
         fi
         ;;
       pnpm_global_pkg)
-        printf '  %s pnpm global pkg %s\n' "$T_REMOVE" "$target"
+        display "  $T_REMOVE pnpm global pkg $target"
         ;;
       corepack_pnpm)
-        printf '  %s %s was activated via corepack (left in place)\n' "$T_NOTE" "$target"
+        display "  $T_NOTE $target was activated via corepack (left in place)"
         ;;
       pnpm_home)
         if [[ "$status" == "preexisting" ]]; then
-          printf '  %s PNPM_HOME %s (preexisting)\n' "$T_SKIP" "$target"
+          display "  $T_SKIP PNPM_HOME $target (preexisting)"
         else
-          printf '  %s PNPM_HOME %s\n' "$T_REMOVE" "$target"
+          display "  $T_REMOVE PNPM_HOME $target"
         fi
         ;;
       npmrc_block|shell_rc_block)
-        printf '  %s managed block from %s\n' "$T_STRIP" "$target"
+        display "  $T_STRIP managed block from $target"
         ;;
       openclaw_service)
-        printf '  %s openclaw service: %s\n' "$T_REMOVE" "$target"
+        display "  $T_REMOVE openclaw service: $target"
         ;;
       openclaw_config_file)
-        printf '  %s openclaw config file %s\n' "$T_REMOVE" "$target"
+        display "  $T_REMOVE openclaw config file $target"
         ;;
       openclaw_workspace)
         if [[ "$status" == "preexisting" ]]; then
-          printf '  %s openclaw workspace %s (preexisting — not ours to remove)\n' "$T_KEEP" "$target"
+          display "  $T_KEEP openclaw workspace $target (preexisting — not ours to remove)"
         elif (( PURGE_WORKSPACE )); then
-          printf '  %s openclaw workspace %s\n' "$T_REMOVE" "$target"
+          display "  $T_REMOVE openclaw workspace $target"
         else
-          printf '  %s openclaw workspace %s (use --purge-workspace to remove)\n' "$T_KEEP" "$target"
+          display "  $T_KEEP openclaw workspace $target (use --purge-workspace to remove)"
         fi
         ;;
       uv_binary)
         if [[ "$status" == "preexisting" ]]; then
-          printf '  %s uv at %s (preexisting)\n' "$T_SKIP" "$target"
+          display "  $T_SKIP uv at $target (preexisting)"
         else
-          printf '  %s uv binary %s\n' "$T_REMOVE" "$target"
+          display "  $T_REMOVE uv binary $target"
         fi
         ;;
       uv_python)
         if [[ "$status" == "preexisting" ]]; then
-          printf '  %s uv-managed Python %s (preexisting)\n' "$T_SKIP" "$target"
+          display "  $T_SKIP uv-managed Python $target (preexisting)"
         else
-          printf '  %s uv python uninstall %s\n' "$T_REMOVE" "$target"
+          display "  $T_REMOVE uv python uninstall $target"
         fi
         ;;
       hermes_node_symlink)
         if [[ "$status" == "preexisting" ]]; then
-          printf '  %s hermes Node dir %s (preexisting, owned by hermes)\n' "$T_SKIP" "$target"
+          display "  $T_SKIP hermes Node dir $target (preexisting, owned by hermes)"
         else
-          printf '  %s hermes Node symlink dir %s\n' "$T_REMOVE" "$target"
+          display "  $T_REMOVE hermes Node symlink dir $target"
         fi
         ;;
       hermes_install_dir)
         if [[ "$status" == "preexisting" ]]; then
-          printf '  %s hermes install dir %s (preexisting)\n' "$T_SKIP" "$target"
+          display "  $T_SKIP hermes install dir $target (preexisting)"
         else
-          printf '  %s hermes install dir %s\n' "$T_REMOVE" "$target"
+          display "  $T_REMOVE hermes install dir $target"
         fi
         ;;
       hermes_bin)
         if [[ "$status" == "preexisting" ]]; then
-          printf '  %s hermes binary %s (preexisting)\n' "$T_SKIP" "$target"
+          display "  $T_SKIP hermes binary $target (preexisting)"
         else
-          printf '  %s hermes binary %s\n' "$T_REMOVE" "$target"
+          display "  $T_REMOVE hermes binary $target"
         fi
         ;;
       hermes_home)
         if [[ "$status" == "preexisting" ]]; then
-          printf '  %s hermes home %s (preexisting — not ours to remove)\n' "$T_KEEP" "$target"
+          display "  $T_KEEP hermes home $target (preexisting — not ours to remove)"
         elif (( PURGE_HERMES_HOME )); then
-          printf '  %s hermes home %s\n' "$T_REMOVE" "$target"
+          display "  $T_REMOVE hermes home $target"
         else
-          printf '  %s hermes home %s (use --purge-hermes-home to remove)\n' "$T_KEEP" "$target"
+          display "  $T_KEEP hermes home $target (use --purge-hermes-home to remove)"
         fi
         ;;
-      *) printf '  %s %s %s\n' "$T_UNK" "$action" "$target" ;;
+      *) display "  $T_UNK $action $target" ;;
     esac
   done < <(rows_reverse)
-  echo
+  display ""
 }
 
 apply_uninstall() {
-  while IFS=$'\t' read -r ts action target status note; do
+  display "@@step:uninstall-apply:正在执行卸载操作…"
+  while IFS=$'\t' read -r _ts action target status _note; do
     case "$action" in
       system_pkg)
         SYSTEM_PKG_NOTES+=("$target ($status)")
@@ -222,14 +226,14 @@ apply_uninstall() {
         if command -v fnm >/dev/null 2>&1; then
           run_cmd fnm uninstall "$target"
         else
-          warn "  fnm not on PATH — cannot uninstall node v$target"
+          log "  fnm not on PATH — cannot uninstall node v$target"
         fi
         ;;
       pnpm_global_pkg)
         if command -v pnpm >/dev/null 2>&1; then
           run_cmd pnpm rm -g "$target"
         else
-          warn "  pnpm not on PATH — cannot remove global pkg $target"
+          log "  pnpm not on PATH — cannot remove global pkg $target"
         fi
         ;;
       corepack_pnpm)
@@ -251,7 +255,7 @@ apply_uninstall() {
           run_cmd openclaw gateway stop
           run_cmd openclaw gateway uninstall
         else
-          warn "  openclaw not on PATH — cannot stop/uninstall service $target"
+          log "  openclaw not on PATH — cannot stop/uninstall service $target"
         fi
         ;;
       openclaw_config_file)
@@ -276,7 +280,7 @@ apply_uninstall() {
         if command -v uv >/dev/null 2>&1; then
           run_cmd uv python uninstall "$target"
         else
-          warn "  uv not on PATH — cannot uninstall Python $target (uv binary may already be removed)"
+          log "  uv not on PATH — cannot uninstall Python $target (uv binary may already be removed)"
         fi
         ;;
       hermes_node_symlink)
@@ -302,55 +306,61 @@ apply_uninstall() {
           log "  keeping hermes home: $target"
         fi
         ;;
-      *) warn "  unknown manifest action: $action $target" ;;
+      *) log "  unknown manifest action: $action $target" ;;
     esac
   done < <(rows_reverse)
 }
 
 print_followup() {
-  echo
-  echo "==============================================================================="
-  echo "  Uninstall complete."
-  if [[ -n "${CLAW_INSTALL_LOG:-}" ]]; then
-    echo "  This run logged to: $CLAW_INSTALL_LOG"
-  fi
+  display "✓ 卸载完成"
+  display "  日志：$CLAW_SESSION_LOG"
   if (( ${#SYSTEM_PKG_NOTES[@]} > 0 )); then
-    echo
-    echo "  系统共享依赖未被移除（避免影响其他软件）。如需手动清理，曾被本安装器触及："
+    display ""
+    display "  系统共享依赖未被移除（避免影响其他软件）。如需手动清理，曾被本安装器触及："
     local p
     for p in "${SYSTEM_PKG_NOTES[@]}"; do
-      echo "    - $p"
+      log "    - $p"
     done
   fi
   if (( ! PURGE_WORKSPACE )); then
-    echo
-    echo "  OpenClaw workspace 已保留。要一并清除请使用：./uninstall.sh --purge-workspace"
+    display ""
+    display "  OpenClaw workspace 已保留。要一并清除请使用：./uninstall.sh --purge-workspace"
   fi
   if (( ! PURGE_HERMES_HOME )); then
-    echo "  Hermes home (~/.hermes) 已保留。要一并清除请使用：./uninstall.sh --purge-hermes-home"
-    echo "  注意：上游脚本写入 ~/.bashrc / ~/.zshrc / ~/.profile 的 ~/.local/bin PATH 行无 sentinel，"
-    echo "        如需移除请手动检查 rc 文件。"
+    display "  Hermes home (~/.hermes) 已保留。要一并清除请使用：./uninstall.sh --purge-hermes-home"
+    log "  注意：上游脚本写入 ~/.bashrc / ~/.zshrc / ~/.profile 的 ~/.local/bin PATH 行无 sentinel，"
+    log "        如需移除请手动检查 rc 文件。"
   fi
-  echo "==============================================================================="
 }
 
 main() {
+  # Start debug tail if requested (fd 3 was opened when common.sh was sourced)
+  if (( DEBUG_MODE )); then
+    display "日志文件：$CLAW_SESSION_LOG"
+    tail -F "$CLAW_SESSION_LOG" >&2 &
+    TAIL_PID=$!
+    trap 'kill "$TAIL_PID" 2>/dev/null || true' EXIT
+  fi
+
+  trap 'die_step_handler' ERR
+
   plan_summary
   if (( DRY_RUN )); then
     log "Dry run — no changes made."
+    display "试运行完成，未做任何更改。"
     return
   fi
   if (( ! ASSUME_YES )); then
     read -r -p "Proceed with uninstall? [y/N] " ans
     case "$ans" in
       y|Y|yes|YES) ;;
-      *) die "Aborted." ;;
+      *) die_step "卸载确认" "Aborted by user." 1 ;;
     esac
   fi
   apply_uninstall
   if (( ! KEEP_MANIFEST )); then
     run_cmd rm -f "$CLAW_MANIFEST"
-    # State dir may still contain install logs — leave it for forensic use.
+    # State dir may still contain other files — leave it for forensic use.
   fi
   print_followup
 }

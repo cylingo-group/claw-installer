@@ -1,6 +1,46 @@
 #!/usr/bin/env bash
 # lib/common.sh — shared helpers + env defaults for the claw-installer.
 # This file is meant to be SOURCED, never executed directly.
+#
+# =============================================================================
+# TWO-STREAM LOGGING CONTRACT
+# =============================================================================
+# Scripts must author EVERY user-visible string explicitly. Three primitives:
+#
+#   display "中文描述…"
+#       Writes to stdout (user sees it) AND to fd 3 (session log file).
+#       If the argument matches @@step:<key>:<label>, it also sets CURRENT_STEP.
+#
+#   log "technical detail"
+#       Writes to fd 3 ONLY. Never appears on the user's terminal.
+#
+#   run <cmd> [args…]
+#       Writes "+ <cmd> [args…]" to fd 3, then executes <cmd> with both stdout
+#       and stderr redirected to fd 3. Returns the command's exit code.
+#
+# Convenience macros:
+#
+#   step "<label>" -- <cmd> [args…]
+#       Shorthand: display "@@step:<auto-key>:<label>" then run <cmd> [args…].
+#       Use display + run directly when you need explicit key control.
+#
+#   die_step_handler   (call from: trap 'die_step_handler' ERR)
+#       Emits the 3-line ✗ failure block using $CURRENT_STEP / $BASH_COMMAND.
+#       Register at the top of every entry-point main():
+#           trap 'die_step_handler' ERR
+#
+#   die_step "<label>" "<cmd-description>" <exit-code>
+#       Explicit variant of the failure block when you want to call it directly.
+#
+# IMPORTANT — trap ERR + conditional footgun:
+#   `trap ERR` does NOT fire when a command is inside an `if` conditional, a
+#   `&&` / `||` chain, or a `while`/`until` condition. Examples:
+#       if run cmd; then ...   # trap ERR will NOT fire if cmd fails
+#       run cmd || true        # intentional non-zero; trap correctly suppressed
+#   Authors MUST use `run cmd || true` for commands that may legitimately fail.
+#   The only safe use of run inside a conditional is when the caller handles
+#   the non-zero return explicitly (without relying on the trap).
+# =============================================================================
 
 # Resolve project root from this file's location: <root>/lib/common.sh
 __CLAW_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -32,9 +72,122 @@ export NPMRC_SENTINEL_END="# <<< managed by claw-installer <<<"
 export SHELL_RC_SENTINEL_BEGIN="# >>> claw-installer env >>>"
 export SHELL_RC_SENTINEL_END="# <<< claw-installer env <<<"
 
-log()  { printf '\033[1;34m[claw-installer]\033[0m %s\n' "$*"; }
-warn() { printf '\033[1;33m[claw-installer]\033[0m %s\n' "$*" >&2; }
-die()  { printf '\033[1;31m[claw-installer]\033[0m %s\n' "$*" >&2; exit 1; }
+# =============================================================================
+# fd 3 — session log setup
+# =============================================================================
+# Rust sets CLAW_SESSION_LOG before spawning. If running directly from CLI
+# without Rust, auto-generate a fallback so scripts always have a log file.
+CURRENT_STEP="${CURRENT_STEP:-}"
+
+if [[ -n "${CLAW_SESSION_LOG:-}" ]]; then
+  exec 3>>"$CLAW_SESSION_LOG"
+else
+  # Auto-generate a CLI fallback log path.
+  _fallback_log_dir="${TMPDIR:-/tmp}/claw-installer"
+  mkdir -p "$_fallback_log_dir"
+  _fallback_ts="$(date -u +%Y%m%dT%H%M%SZ 2>/dev/null || date +%Y%m%dT%H%M%SZ)"
+  export CLAW_SESSION_LOG="$_fallback_log_dir/cli-${_fallback_ts}.log"
+  exec 3>>"$CLAW_SESSION_LOG"
+  unset _fallback_log_dir _fallback_ts
+fi
+
+# =============================================================================
+# Core primitives
+# =============================================================================
+
+# display <msg>
+#   Write to stdout AND fd 3 (log file).
+#   If msg matches @@step:<key>:<label>, set CURRENT_STEP to <label>.
+display() {
+  printf '%s\n' "$*"
+  printf '%s\n' "$*" >&3
+  # Check for @@step:<key>:<label> sentinel and update CURRENT_STEP
+  if [[ "$*" =~ ^@@step:([a-z][a-z0-9-]*):(.+)$ ]]; then
+    CURRENT_STEP="${BASH_REMATCH[2]}"
+  fi
+}
+
+# log <msg>
+#   Write to fd 3 (log file) ONLY. Nothing on stdout.
+log() {
+  printf '%s\n' "$*" >&3
+}
+
+# run <cmd> [args…]
+#   Log the command, execute it with stdout+stderr → fd 3, return exit code.
+run() {
+  log "+ $*"
+  "$@" >&3 2>&3
+  return $?
+}
+
+# step "<label>" -- <cmd> [args…]
+#   Convenience macro: derive a key from the label, emit the @@step sentinel,
+#   then run the command. For explicit key control use display + run directly.
+#
+#   Usage:
+#     step "正在安装 Node 22 运行时" -- fnm install 22
+#     step --key node "正在安装 Node 22 运行时" -- fnm install 22
+step() {
+  local key label
+  if [[ "${1:-}" == "--key" ]]; then
+    key="$2"
+    label="$3"
+    shift 3
+  else
+    label="$1"
+    # Derive key: lowercase, replace non-alnum chars with -, strip leading/trailing -
+    key="$(printf '%s' "$label" | tr '[:upper:]' '[:lower:]' \
+          | sed 's/[^a-z0-9]/-/g; s/--*/-/g; s/^-//; s/-$//' \
+          | cut -c1-30)"
+    shift
+  fi
+  # Expect "--" separator
+  if [[ "${1:-}" == "--" ]]; then
+    shift
+  fi
+  display "@@step:${key}:${label}"
+  run "$@"
+}
+
+# die_step_handler — call from: trap 'die_step_handler' ERR
+#   Reads $CURRENT_STEP, $BASH_COMMAND from caller scope.
+#   Emits 3-line ✗ failure block to stdout and fd 3, then exits 1.
+die_step_handler() {
+  local exit_code=$?
+  local step_label="${CURRENT_STEP:-（未知步骤）}"
+  local cmd="${BASH_COMMAND:-（未知命令）}"
+  printf '✗ 失败步骤：%s\n' "$step_label"
+  printf '✗ 失败原因：%s 退出码 %s\n' "$cmd" "$exit_code"
+  printf '✗ 详见完整日志：%s\n' "${CLAW_SESSION_LOG:-（日志路径未知）}"
+  {
+    printf '✗ 失败步骤：%s\n' "$step_label"
+    printf '✗ 失败原因：%s 退出码 %s\n' "$cmd" "$exit_code"
+    printf '✗ 详见完整日志：%s\n' "${CLAW_SESSION_LOG:-（日志路径未知）}"
+  } >&3
+  exit 1
+}
+
+# die_step <label> <cmd-description> <exit-code>
+#   Explicit variant: caller provides all three values directly.
+die_step() {
+  local step_label="${1:-（未知步骤）}"
+  local cmd="${2:-（未知命令）}"
+  local exit_code="${3:-1}"
+  printf '✗ 失败步骤：%s\n' "$step_label"
+  printf '✗ 失败原因：%s 退出码 %s\n' "$cmd" "$exit_code"
+  printf '✗ 详见完整日志：%s\n' "${CLAW_SESSION_LOG:-（日志路径未知）}"
+  {
+    printf '✗ 失败步骤：%s\n' "$step_label"
+    printf '✗ 失败原因：%s 退出码 %s\n' "$cmd" "$exit_code"
+    printf '✗ 详见完整日志：%s\n' "${CLAW_SESSION_LOG:-（日志路径未知）}"
+  } >&3
+  exit 1
+}
+
+# =============================================================================
+# Preserved helpers (updated to use new log() primitive)
+# =============================================================================
 
 run_as_root() {
   if [[ "$(id -u)" -eq 0 ]]; then
@@ -42,21 +195,22 @@ run_as_root() {
   elif command -v sudo >/dev/null 2>&1; then
     sudo "$@"
   else
-    die "Need root to run: $* (install sudo or rerun as root)"
+    die_step "权限检查" "Need root to run: $* (install sudo or rerun as root)" 1
   fi
 }
 
 detect_platform() {
+  display "@@step:detect-platform:正在检测系统平台…"
   case "$(uname -s)" in
     Darwin) PLATFORM="macos" ;;
     Linux)
       if   command -v apt-get >/dev/null 2>&1; then PLATFORM="debian"
       elif command -v dnf     >/dev/null 2>&1; then PLATFORM="rhel"
       elif command -v yum     >/dev/null 2>&1; then PLATFORM="rhel"
-      else die "Unsupported Linux distro (need apt-get / dnf / yum)"
+      else die_step "系统平台检测" "Unsupported Linux distro (need apt-get / dnf / yum)" 1
       fi
       ;;
-    *) die "Unsupported OS: $(uname -s)" ;;
+    *) die_step "系统平台检测" "Unsupported OS: $(uname -s)" 1 ;;
   esac
   export PLATFORM
   log "Detected platform: $PLATFORM ($(uname -sm))"
@@ -106,11 +260,11 @@ run_steps() {
   local s file fn
   for s in "$@"; do
     file="$CLAW_STEPS_DIR/$s.sh"
-    [[ -f "$file" ]] || die "Unknown step: $s (no such file $file)"
+    [[ -f "$file" ]] || die_step "步骤加载" "Unknown step: $s (no such file $file)" 1
     # shellcheck source=/dev/null
     source "$file"
     fn="step_${s//-/_}"
-    type "$fn" >/dev/null 2>&1 || die "Step '$s' did not define function $fn"
+    type "$fn" >/dev/null 2>&1 || die_step "步骤加载" "Step '$s' did not define function $fn" 1
     "$fn"
   done
 }
@@ -122,7 +276,7 @@ run_steps() {
 agent_env_steps() {
   local agent="$1"
   local script="$CLAW_INSTALLER_ROOT/install-$agent.sh"
-  [[ -f "$script" ]] || die "Unknown agent: $agent (no $script)"
+  [[ -f "$script" ]] || die_step "代理查找" "Unknown agent: $agent (no $script)" 1
   ( # shellcheck source=/dev/null
     source "$script" >/dev/null 2>&1
     printf '%s\n' "${ENV_STEPS[@]:-}" )
