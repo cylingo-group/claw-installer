@@ -20,7 +20,9 @@ step_uv() {
   fi
   if [[ -x "$uv_bin" ]]; then
     log "uv already at $uv_bin"
-    export PATH="$HOME/.local/bin:$PATH"
+    # PATH ordering owned by _claw_compose_path in common.sh (it already
+    # includes $HOME/.local/bin). Re-derive in case PATH was clobbered.
+    _claw_compose_path
     display "uv 已就绪：$uv_bin"
     manifest_record uv_binary "$uv_bin" preexisting
     return
@@ -31,7 +33,7 @@ step_uv() {
   # ~/.local/bin PATH line, and (b) our shell-rc step doesn't run for the
   # hermes-only path. Users still get the binary at a stable, on-PATH location.
   run bash -c 'curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALLER_NO_MODIFY_PATH=1 sh' </dev/null
-  export PATH="$HOME/.local/bin:$PATH"
+  _claw_compose_path
   hash -r 2>/dev/null || true
   command -v uv >/dev/null 2>&1 || die_step "安装 uv" "uv not on PATH after install (looked in $uv_bin)" 1
   log "uv installed: $(uv --version) at $uv_bin"

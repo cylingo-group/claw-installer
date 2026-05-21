@@ -68,10 +68,10 @@ export async function runUninstaller(
   return invoke("run_uninstaller", { agent, onEvent: ch });
 }
 
-/** Run an agent lifecycle action (start / stop / restart) via shell. */
+/** Run an agent lifecycle action (start / stop) via shell. */
 export async function runServiceAction(
   agent: string,
-  action: "start" | "stop" | "restart",
+  action: "start" | "stop",
   onEvent: (e: InstallerEvent) => void
 ): Promise<void> {
   const ch = new Channel<InstallerEvent>();
@@ -82,4 +82,17 @@ export async function runServiceAction(
 /** Trigger an immediate system reboot (Windows only). Returns Err on non-Windows. */
 export async function systemReboot(): Promise<void> {
   return invoke("system_reboot");
+}
+
+/**
+ * Windows only: run bootstrap.ps1 -InstallWslOnly under UAC to provision WSL
+ * features + the target distro. Streams the same InstallerEvent shape so the
+ * @@reboot:<kind> sentinel surfaces as a RebootRequired event.
+ */
+export async function installWsl(
+  onEvent: (e: InstallerEvent) => void
+): Promise<void> {
+  const ch = new Channel<InstallerEvent>();
+  ch.onmessage = onEvent;
+  return invoke("install_wsl", { onEvent: ch });
 }

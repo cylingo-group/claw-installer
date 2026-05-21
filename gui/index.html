@@ -8,8 +8,91 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <!-- Google Fonts imported from src/styles/tokens.css -->
+  <!--
+    Pre-mount skeleton. Rendered before main.tsx evaluates, so the first paint
+    has structure instead of an empty white viewport. Tauri's webview can take
+    200-800ms between window-show and React's first render on cold start (Vite
+    chunks + JIT) — without this the user stares at a flash of white.
+    The keyframes / colors are duplicated here (not imported from tokens.css)
+    on purpose: importing a CSS file would block the first paint we're trying
+    to optimize. Values must stay in sync with --ued-background / --ued-surface
+    / --ued-border in src/styles/tokens.css (#FAFAFA / #FFFFFF / #E5E5E5).
+    main.tsx removes the #boot-splash node right after React mounts.
+  -->
+  <style>
+    html, body { margin: 0; padding: 0; height: 100%; background: #FFFFFF; }
+    #boot-splash {
+      position: fixed; inset: 0; display: flex; flex-direction: column;
+      background: #FFFFFF; z-index: 9999;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+                    "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      color: #333;
+    }
+    .bs-header {
+      display: flex; align-items: center; gap: 12px;
+      padding: 20px 12px 16px; border-bottom: 1px solid transparent;
+    }
+    .bs-logo {
+      width: 44px; height: 44px; border-radius: 10px; flex-shrink: 0;
+      background: linear-gradient(135deg, #f1f1f1 0%, #fafafa 100%);
+    }
+    .bs-title { flex: 1; min-width: 0; line-height: 1.2; }
+    .bs-line {
+      height: 10px; border-radius: 4px; background: #EEEEEE;
+      animation: bs-shimmer 1.2s ease-in-out infinite;
+    }
+    .bs-line.bs-line-sm { width: 60%; height: 8px; margin-top: 6px; opacity: .7; }
+    .bs-section-label {
+      padding: 8px 16px 8px; font-size: 11px; color: #999;
+      text-transform: uppercase; letter-spacing: .04em;
+    }
+    .bs-cards { padding: 0 12px; display: flex; flex-direction: column; gap: 8px; }
+    .bs-card {
+      border: 1px solid #E5E5E5; border-radius: 8px;
+      padding: 10px 12px; display: flex; align-items: center; gap: 10px;
+      background: #FFFFFF;
+    }
+    .bs-card-icon {
+      width: 20px; height: 20px; border-radius: 4px; flex-shrink: 0;
+      background: #EEEEEE; animation: bs-shimmer 1.2s ease-in-out infinite;
+    }
+    .bs-card-body { flex: 1; min-width: 0; }
+    .bs-footer { margin-top: auto; padding: 12px; border-top: 1px solid #E5E5E5; }
+    .bs-button {
+      height: 36px; border-radius: 6px; background: #EEEEEE;
+      animation: bs-shimmer 1.2s ease-in-out infinite;
+    }
+    @keyframes bs-shimmer {
+      0%, 100% { opacity: 1; }
+      50%      { opacity: 0.55; }
+    }
+    /* Crossfade out once React has mounted. main.tsx adds .bs-hidden, then
+       removes the element after the transition completes. */
+    #boot-splash.bs-hidden { opacity: 0; transition: opacity .18s ease-out; pointer-events: none; }
+  </style>
 </head>
 <body>
+  <div id="boot-splash" aria-hidden="true">
+    <div class="bs-header">
+      <div class="bs-logo"></div>
+      <div class="bs-title">
+        <div class="bs-line" style="width: 60%;"></div>
+        <div class="bs-line bs-line-sm"></div>
+      </div>
+    </div>
+    <div class="bs-section-label">Agents</div>
+    <div class="bs-cards">
+      <div class="bs-card">
+        <div class="bs-card-icon"></div>
+        <div class="bs-card-body"><div class="bs-line" style="width: 40%;"></div></div>
+      </div>
+      <div class="bs-card">
+        <div class="bs-card-icon"></div>
+        <div class="bs-card-body"><div class="bs-line" style="width: 50%;"></div></div>
+      </div>
+    </div>
+    <div class="bs-footer"><div class="bs-button"></div></div>
+  </div>
   <div id="root"></div>
   <script type="module" src="/src/main.tsx"></script>
 </body>

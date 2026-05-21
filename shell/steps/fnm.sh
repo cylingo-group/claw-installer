@@ -22,10 +22,16 @@ step_fnm() {
   fi
   FNM_DIR="$(resolve_fnm_dir)"
   export FNM_DIR
-  export PATH="$FNM_DIR:$PATH"
+  # PATH ordering owned by _claw_compose_path in common.sh — re-assert now
+  # that FNM_DIR is exported so it shows up in the canonical slot.
+  _claw_compose_path
   command -v fnm >/dev/null 2>&1 || die_step "安装 fnm" "fnm still not on PATH after install (looked in $FNM_DIR)" 1
-  # Activate fnm in this shell.
+  # Activate fnm in this shell. This adds $FNM_MULTISHELL_PATH/bin to PATH
+  # and defines the `fnm` shell function (used by `fnm use`).
   eval "$(fnm env --shell bash)"
+  # _claw_fnm_active_bin reads $FNM_DIR/aliases/default — re-derive PATH so
+  # the active version's bin dir takes the top slot.
+  _claw_compose_path
   log "fnm version: $(fnm --version), dir: $FNM_DIR"
   manifest_record fnm_binary "$FNM_DIR" "$fnm_status"
 }

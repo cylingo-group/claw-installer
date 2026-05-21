@@ -1,4 +1,5 @@
 mod commands;
+mod login_env;
 mod manifest;
 mod steps;
 mod types;
@@ -20,6 +21,12 @@ pub fn run() {
         );
     }
 
+    // Harvest the user's interactive-login shell env once now, so the first
+    // install/start click doesn't pay the shell-spawn latency. macOS GUI apps
+    // start with launchd's minimal PATH; without this, bash spawns can't see
+    // PNPM_HOME / FNM_DIR / customized PATH from .zshrc / .bashrc.
+    login_env::prime();
+
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_fs::init())
@@ -36,6 +43,7 @@ pub fn run() {
             commands::cancel_installer,
             commands::run_uninstaller,
             commands::run_service_action,
+            commands::install_wsl,
             commands::system_reboot,
         ])
         .run(tauri::generate_context!())

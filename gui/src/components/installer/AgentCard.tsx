@@ -1,5 +1,12 @@
 import type { ReactNode } from "react";
-import { useInstaller, type AgentId, type AgentState } from "@/store/installer-store";
+import { ChevronRight, Loader2, Play, Settings, Square, Trash2 } from "lucide-react";
+import {
+  useInstaller,
+  isAgentConfigured,
+  isModelConfigured,
+  type AgentId,
+  type AgentState,
+} from "@/store/installer-store";
 import { cn } from "@/lib/utils";
 import openclawLogo from "@/assets/agents/openclaw.svg";
 import hermesLogo from "@/assets/agents/hermes.png";
@@ -13,9 +20,9 @@ export function AgentCard({ agent }: { agent: AgentState }) {
   const startInstall = useInstaller((s) => s.startInstall);
   const startService = useInstaller((s) => s.startService);
   const stopService = useInstaller((s) => s.stopService);
-  const restart = useInstaller((s) => s.restartService);
   const openUninstall = useInstaller((s) => s.openUninstall);
   const openSettings = useInstaller((s) => s.openSettings);
+  const settingsTarget = useInstaller((s) => s.settingsTarget);
   const isBootstrapping = useInstaller((s) => s.isBootstrapping);
   const hostStatus = useInstaller((s) => s.hostStatus);
   const anyTransitioning = useInstaller((s) =>
@@ -36,17 +43,52 @@ export function AgentCard({ agent }: { agent: AgentState }) {
   // Disable destructive/long-running actions while *any* other agent is in flight.
   const installDisabled = isBootstrapping || hostStatus !== "ok" || otherTransitioning || otherLifecycleBusy;
 
+  // Body content only renders when the card is mid-install / errored / freshly
+  // pending install. Once an agent is `ready`/`stopped`, the card collapses to a
+  // single-row layout where every action lives in the right-aligned icon group.
+  const hasBody = transitioning || isError || agent.status === "not-installed";
+
   return (
-    <article className="rounded-lg border border-border bg-surface px-3 py-3">
-      <header className="flex items-start gap-2.5">
+    <article className="rounded-lg border border-border bg-surface px-3 py-2.5">
+      <div className="flex items-center gap-2.5">
         <AgentIcon id={agent.id} />
         <div className="min-w-0 flex-1">
           <div className="truncate text-sm font-medium leading-tight">{agent.name}</div>
         </div>
         {installed && !transitioning && (
-          <div className="-mr-1 -mt-1 flex shrink-0 items-center gap-0.5">
+          <div className="flex shrink-0 items-center gap-0.5">
+            {agent.status === "ready" ? (
+              <IconBtn
+                label={lifecycleBusy && serviceActionKind === "stop" ? "停止中…" : "停止"}
+                tone="stop"
+                onClick={() => stopService(agent.id)}
+                disabled={lifecycleBusy || otherLifecycleBusy || otherTransitioning}
+              >
+                {lifecycleBusy && serviceActionKind === "stop" ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  // Lucide `Square` has the same stroke weight as the other
+                  // outline icons; filling it keeps the stop-glyph visually
+                  // weighty enough to match the filled Play triangle.
+                  <Square className="h-4 w-4" fill="currentColor" strokeWidth={0} />
+                )}
+              </IconBtn>
+            ) : (
+              <IconBtn
+                label={lifecycleBusy && serviceActionKind === "start" ? "启动中…" : "启动"}
+                tone="play"
+                onClick={() => startService(agent.id)}
+                disabled={lifecycleBusy || otherLifecycleBusy || otherTransitioning}
+              >
+                {lifecycleBusy && serviceActionKind === "start" ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Play className="h-4 w-4" fill="currentColor" strokeWidth={0} />
+                )}
+              </IconBtn>
+            )}
             <IconBtn label="配置" onClick={() => openSettings(agent.id)} disabled={lifecycleBusy}>
-              <GearIcon />
+              <Settings className="h-4 w-4" strokeWidth={1.6} />
             </IconBtn>
             <IconBtn
               label="卸载"
@@ -54,81 +96,91 @@ export function AgentCard({ agent }: { agent: AgentState }) {
               disabled={otherTransitioning || lifecycleBusy || otherLifecycleBusy}
               onClick={() => openUninstall(agent.id)}
             >
-              <TrashIcon />
+              <Trash2 className="h-4 w-4" strokeWidth={1.6} />
             </IconBtn>
           </div>
         )}
-      </header>
+      </div>
 
-      <div className="mt-3">
-        {(agent.status === "not-installed") && (
-          <button
-            onClick={() => startInstall([agent.id])}
-            disabled={installDisabled}
-            className={cn(
-              "w-full rounded bg-accent px-3 py-1.5 text-xs font-medium text-white hover:opacity-90",
-              "disabled:cursor-not-allowed disabled:opacity-50"
-            )}
-          >
-            立即安装
-          </button>
-        )}
-
-        {isError && (
-          <div className="space-y-1.5">
-            <div className="rounded bg-danger/5 px-2 py-1.5 text-[11px] text-danger leading-relaxed">
-              {agent.errorMessage ?? "安装失败"}
-              <LogPathHint />
-            </div>
+      {hasBody && (
+        <div className="mt-2.5">
+          {agent.status === "not-installed" && (
             <button
               onClick={() => startInstall([agent.id])}
               disabled={installDisabled}
               className={cn(
-                "w-full rounded border border-danger/40 px-3 py-1.5 text-xs font-medium text-danger hover:bg-danger/5",
+                "w-full rounded bg-accent px-3 py-1.5 text-xs font-medium text-white hover:opacity-90",
                 "disabled:cursor-not-allowed disabled:opacity-50"
               )}
             >
-              重新安装
+              立即安装
             </button>
-          </div>
-        )}
+          )}
 
-        {transitioning && (
-          <ProgressBar
-            label={agent.status === "installing" ? "安装中…" : "卸载中…"}
-            hint={agent.status === "installing" ? "installing" : "uninstalling"}
-            tone={agent.status === "installing" ? "accent" : "danger"}
-            currentStep={agent.currentStep}
-          />
-        )}
+          {isError && (
+            <div className="space-y-1.5">
+              <div className="rounded bg-danger/5 px-2 py-1.5 text-[11px] text-danger leading-relaxed">
+                {agent.errorMessage ?? "安装失败"}
+                <LogPathHint />
+              </div>
+              <button
+                onClick={() => startInstall([agent.id])}
+                disabled={installDisabled}
+                className={cn(
+                  "w-full rounded border border-danger/40 px-3 py-1.5 text-xs font-medium text-danger hover:bg-danger/5",
+                  "disabled:cursor-not-allowed disabled:opacity-50"
+                )}
+              >
+                重新安装
+              </button>
+            </div>
+          )}
 
-        {installed && !transitioning && (
-          <div className="grid grid-cols-2 gap-1.5">
-            {agent.status === "ready" ? (
-              <ActionBtn
-                label={lifecycleBusy && serviceActionKind === "stop" ? "停止中…" : "停止"}
-                icon={lifecycleBusy && serviceActionKind === "stop" ? <SpinnerIcon /> : <StopIcon />}
-                onClick={() => stopService(agent.id)}
-                disabled={lifecycleBusy || otherLifecycleBusy || otherTransitioning}
-              />
-            ) : (
-              <ActionBtn
-                label={lifecycleBusy && serviceActionKind === "start" ? "启动中…" : "启动"}
-                icon={lifecycleBusy && serviceActionKind === "start" ? <SpinnerIcon /> : <PlayIcon />}
-                onClick={() => startService(agent.id)}
-                disabled={lifecycleBusy || otherLifecycleBusy || otherTransitioning}
-              />
-            )}
-            <ActionBtn
-              label={lifecycleBusy && serviceActionKind === "restart" ? "重启中…" : "重启"}
-              icon={lifecycleBusy && serviceActionKind === "restart" ? <SpinnerIcon /> : <RestartIcon />}
-              onClick={() => restart(agent.id)}
-              disabled={lifecycleBusy || otherLifecycleBusy || otherTransitioning}
+          {transitioning && (
+            <ProgressBar
+              label={agent.status === "installing" ? "安装中…" : "卸载中…"}
+              hint={agent.status === "installing" ? "installing" : "uninstalling"}
+              tone={agent.status === "installing" ? "accent" : "danger"}
+              currentStep={agent.currentStep}
             />
-          </div>
-        )}
-      </div>
+          )}
+        </div>
+      )}
+
+      {installed
+        && !isAgentConfigured(agent)
+        && !transitioning
+        && settingsTarget !== agent.id
+        && <UnconfiguredHint agent={agent} onOpen={() => openSettings(agent.id)} />}
     </article>
+  );
+}
+
+function UnconfiguredHint({ agent, onOpen }: { agent: AgentState; onOpen: () => void }) {
+  const modelMissing = !isModelConfigured(agent.config.model);
+  const channelMissing = agent.config.channel === null;
+
+  let copy: string;
+  if (modelMissing && channelMissing) {
+    copy = "尚未完成模型与 IM 通道配置，立即设置";
+  } else if (modelMissing) {
+    copy = "尚未完成模型配置，立即设置";
+  } else {
+    copy = "尚未完成 IM 通道配置，立即设置";
+  }
+
+  return (
+    <button
+      onClick={onOpen}
+      className={cn(
+        "mt-2 flex w-full items-center justify-between gap-2 rounded px-2.5 py-1.5",
+        "border border-amber-200 bg-amber-50 text-[11px] text-amber-800",
+        "hover:bg-amber-100 transition-colors"
+      )}
+    >
+      <span className="truncate text-left">{copy}</span>
+      <ChevronRight className="h-3.5 w-3.5 shrink-0" />
+    </button>
   );
 }
 
@@ -181,48 +233,13 @@ function LogPathHint() {
   );
 }
 
-function ActionBtn({
-  label,
-  icon,
-  onClick,
-  disabled = false,
-}: {
-  label: string;
-  icon: ReactNode;
-  onClick: () => void;
-  disabled?: boolean;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      disabled={disabled}
-      className={cn(
-        "flex items-center justify-center gap-1 rounded border border-border bg-background px-1.5 py-1.5 text-xs font-medium text-foreground transition-colors",
-        "hover:border-foreground/40",
-        "disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-border"
-      )}
-    >
-      <span className="grid h-3 w-3 shrink-0 place-items-center">{icon}</span>
-      {label}
-    </button>
-  );
-}
-
-function SpinnerIcon() {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      className="h-3 w-3 animate-spin"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2.4"
-      strokeLinecap="round"
-    >
-      <path d="M21 12a9 9 0 1 1-3-6.7" />
-    </svg>
-  );
-}
-
+// IconBtn tones:
+// - neutral / danger: muted-by-default, color-on-hover. Used for utility actions
+//   whose color should fade into the card (gear, trash) until the user reaches
+//   for them.
+// - play / stop: always colored. The start/stop service actions are the primary
+//   semantic state of an installed agent — green for runnable, red for live —
+//   so they read at a glance without needing a hover.
 function IconBtn({
   label,
   onClick,
@@ -232,7 +249,7 @@ function IconBtn({
 }: {
   label: string;
   onClick: () => void;
-  tone?: "neutral" | "danger";
+  tone?: "neutral" | "danger" | "play" | "stop";
   disabled?: boolean;
   children: ReactNode;
 }) {
@@ -245,7 +262,11 @@ function IconBtn({
       className={cn(
         "grid h-7 w-7 place-items-center rounded transition-colors",
         "disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent",
-        tone === "danger"
+        tone === "play"
+          ? "text-success hover:bg-success/10"
+          : tone === "stop"
+          ? "text-danger hover:bg-danger/10"
+          : tone === "danger"
           ? "text-muted hover:bg-danger/10 hover:text-danger"
           : "text-muted hover:bg-background hover:text-foreground"
       )}
@@ -255,56 +276,12 @@ function IconBtn({
   );
 }
 
-function PlayIcon() {
-  return (
-    <svg viewBox="0 0 24 24" className="h-3 w-3" fill="currentColor">
-      <path d="M7 5.5v13a.5.5 0 0 0 .77.42l10.4-6.5a.5.5 0 0 0 0-.84l-10.4-6.5A.5.5 0 0 0 7 5.5z" />
-    </svg>
-  );
-}
-
-function StopIcon() {
-  return (
-    <svg viewBox="0 0 24 24" className="h-3 w-3" fill="currentColor">
-      <rect x="6" y="6" width="12" height="12" rx="1.5" />
-    </svg>
-  );
-}
-
-function RestartIcon() {
-  return (
-    <svg viewBox="0 0 24 24" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M3 12a9 9 0 1 0 2.64-6.36" />
-      <path d="M3 4v5h5" />
-    </svg>
-  );
-}
-
-function GearIcon() {
-  return (
-    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="12" cy="12" r="3" />
-      <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.86l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.86-.34 1.7 1.7 0 0 0-1.04 1.56V21a2 2 0 0 1-4 0v-.09a1.7 1.7 0 0 0-1.1-1.56 1.7 1.7 0 0 0-1.86.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.86 1.7 1.7 0 0 0-1.56-1.04H3a2 2 0 0 1 0-4h.09a1.7 1.7 0 0 0 1.56-1.1 1.7 1.7 0 0 0-.34-1.86l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.86.34h.04A1.7 1.7 0 0 0 10 3.09V3a2 2 0 0 1 4 0v.09a1.7 1.7 0 0 0 1.04 1.56 1.7 1.7 0 0 0 1.86-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.86v.04a1.7 1.7 0 0 0 1.56 1.04H21a2 2 0 0 1 0 4h-.09a1.7 1.7 0 0 0-1.56 1.04Z" />
-    </svg>
-  );
-}
-
-function TrashIcon() {
-  return (
-    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M4 7h16" />
-      <path d="M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2" />
-      <path d="M6 7l1 13a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-13" />
-    </svg>
-  );
-}
-
 function AgentIcon({ id }: { id: AgentId }) {
   return (
     <img
       src={AGENT_LOGOS[id]}
       alt={`${id} logo`}
-      className="mt-0.5 h-5 w-5 shrink-0 rounded-sm object-contain"
+      className="h-5 w-5 shrink-0 rounded-sm object-contain"
       draggable={false}
     />
   );

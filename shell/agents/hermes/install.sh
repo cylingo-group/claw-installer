@@ -116,7 +116,10 @@ install_hermes_agent() {
         && -z "${INSTALLER_FORCE_REINSTALL:-}" ]]; then
     local hv
     hv="$("$HERMES_BIN" --version 2>/dev/null || true)"
-    display "Hermes 已安装，跳过上游安装（版本 $hv）"
+    # Brace the var so bash 3.2 (macOS /bin/bash) doesn't read the trailing
+    # full-width 」 as part of the variable name, which under `set -u` turns
+    # into a fatal "hv）: unbound variable" that bypasses the ERR trap.
+    display "Hermes 已安装，跳过上游安装（版本 ${hv}）"
     log "Hermes already installed at $HERMES_BIN${hv:+ ($hv)} — skipping upstream installer (set INSTALLER_FORCE_REINSTALL=1 to redo)"
     manifest_record hermes_install_dir "$HERMES_INSTALL_DIR" "$id_status"
     manifest_record hermes_home        "$HERMES_HOME_DIR"    "$hh_status"
@@ -139,7 +142,28 @@ install_hermes_agent() {
   [[ -d "$HERMES_HOME_DIR"    ]] && manifest_record hermes_home        "$HERMES_HOME_DIR"    "$hh_status"
   [[ -x "$HERMES_BIN"         ]] && manifest_record hermes_bin         "$HERMES_BIN"         "$bin_status"
 
+  register_hermes_gateway_service
+
   _print_hermes_summary
+}
+
+# Register the launchd/systemd service definition for `hermes gateway` so the
+# start/stop UI buttons have something to act on. Does NOT start the service —
+# user kicks it off via the GUI's start button (gateway requires messaging
+# credentials, which the user configures via `hermes setup`).
+#
+# Idempotent. Recorded in the manifest so uninstall can remove the plist/unit.
+register_hermes_gateway_service() {
+  display "@@step:hermes-service:正在注册 Hermes 网关服务…"
+  command -v hermes >/dev/null 2>&1 \
+    || { log "hermes not on PATH after install — skipping gateway service registration"; return; }
+  if run run_with_timeout 30 hermes gateway install </dev/null; then
+    manifest_record hermes_service gateway installed
+    display "✓ Hermes 网关服务已注册（启动需在 UI 中点击）"
+  else
+    log "hermes gateway install timed out or non-zero — service definition may be missing."
+    log "  Run manually: hermes gateway install"
+  fi
 }
 
 _print_hermes_summary() {
@@ -165,8 +189,13 @@ main() {
   for arg in "$@"; do
     case "$arg" in
       --debug) DEBUG_MODE=1 ;;
+      --trace) export INSTALLER_TRACE=1 ;;
     esac
   done
+
+  # Activate xtrace if --trace was passed on CLI (env-var path already
+  # triggered inside common.sh at source time).
+  _claw_enable_trace
 
   # Start debug tail AFTER fd 3 is open (common.sh opens it at source time)
   if [[ "$DEBUG_MODE" == "1" ]]; then

@@ -50,7 +50,15 @@ run_agent() {
   if [[ "${DEBUG_MODE}" == "1" ]]; then
     extra_args+=(--debug)
   fi
-  INSTALLER_SKIP_ENV=1 CLAW_SESSION_LOG="$CLAW_SESSION_LOG" bash "$script" "${extra_args[@]}"
+  if [[ -n "${INSTALLER_TRACE:-}" ]]; then
+    extra_args+=(--trace)
+  fi
+  # NB: macOS ships bash 3.2 at /bin/bash. With `set -u`, expanding an empty
+  # array as "${arr[@]}" triggers an unbound-variable error that bypasses
+  # ERR traps (fatal, no failure block emitted). Use the `${arr[@]+...}` guard
+  # so the array only expands when non-empty.
+  INSTALLER_SKIP_ENV=1 CLAW_SESSION_LOG="$CLAW_SESSION_LOG" \
+    bash "$script" ${extra_args[@]+"${extra_args[@]}"}
 }
 
 # Union of every selected agent's ENV_STEPS, preserving declaration order
@@ -76,15 +84,24 @@ main() {
   for arg in "$@"; do
     case "$arg" in
       --debug) DEBUG_MODE=1 ;;
+      --trace)
+        # Convenience alias for INSTALLER_TRACE=1: enable bash xtrace and have
+        # it written to the session log (fd 3) only, not the user's terminal.
+        # Cheap to leave on while triaging "script died with no error block".
+        export INSTALLER_TRACE=1
+        ;;
       --help|-h)
         cat <<'EOF'
 install.sh — claw-installer top-level entry
 
-Usage: install.sh [--debug] [--help]
+Usage: install.sh [--debug] [--trace] [--help]
 
 Flags:
   --debug   Tail the session log to stderr in real time.
             Useful for CLI triage and verifying installer output.
+  --trace   Enable bash xtrace into the session log (alias for INSTALLER_TRACE=1).
+            Every command bash executes is logged with file:line and function.
+            Combine with --debug to watch it stream live.
   --help    Show this help message.
 
 Environment overrides (INSTALLER_* prefix):
@@ -95,6 +112,7 @@ Environment overrides (INSTALLER_* prefix):
   INSTALLER_GATEWAY_TOKEN=<hex>      Override gateway auth token.
   INSTALLER_NPM_REGISTRY=<url>       Override npm registry URL.
   INSTALLER_SKIP_USER_NPMRC=1        Skip writing ~/.npmrc mirror block.
+  INSTALLER_TRACE=1                  Equivalent to --trace (xtrace → fd 3).
 
 Session log: written to \$CLAW_SESSION_LOG (set by Rust) or auto-generated under
   \$TMPDIR/claw-installer/cli-<ts>.log when run directly from the terminal.
@@ -103,6 +121,10 @@ EOF
         ;;
     esac
   done
+
+  # Activate xtrace if --trace was passed on CLI (env-var path already
+  # triggered inside common.sh at source time; this picks up the CLI flag).
+  _claw_enable_trace
 
   # Start debug tail AFTER fd 3 is open (common.sh opens it at source time)
   if [[ "$DEBUG_MODE" == "1" ]]; then

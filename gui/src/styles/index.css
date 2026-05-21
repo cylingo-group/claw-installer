@@ -46,6 +46,17 @@
   animation: ued-indeterminate 1.4s cubic-bezier(0.4, 0, 0.2, 1) infinite;
 }
 
+/* Gentle pulse used by skeleton placeholders. Keeps the same beat as the
+   pre-mount #boot-splash shimmer in index.html so the handoff from splash
+   to React-rendered skeletons doesn't visually flicker. */
+@keyframes ued-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.55; }
+}
+.ued-pulse {
+  animation: ued-pulse 1.2s ease-in-out infinite;
+}
+
 /* Minimal scrollbar for the log panel (and any other element opting in). */
 .ued-scroll-thin {
   scrollbar-width: thin;

@@ -17,21 +17,53 @@ export type AgentStatus =
   | "error";
 
 export type HostStatus =
+  | "detecting"
   | "ok"
   | "needs-wsl-install"
   | "needs-ubuntu-firstrun";
 
-export interface OpenclawConfig {
-  channel: "stable" | "beta" | "nightly";
-  provider: "anthropic" | "openai" | "gemini";
+// ---- Agent config types -------------------------------------------------------
+
+export type ModelProvider = "deepseek" | "kimi" | "minimax" | "xinyuan";
+
+/** Providers that accept user-supplied API key + model name. 心元 has no inputs yet. */
+export type CredentialedProvider = Exclude<ModelProvider, "xinyuan">;
+
+export type ChannelId = "wechat" | "feishu" | "dingtalk" | "bubbolink";
+
+export interface ProviderCredentials {
+  apiKey: string;
+  modelName: string;
 }
 
-export interface HermesConfig {
-  engine: "chromium" | "firefox" | "webkit";
-  userAgent: "desktop" | "mobile";
+/**
+ * Per-provider credential storage. Each provider's apiKey / modelName is
+ * persisted independently so switching the expanded card does not clobber
+ * what the user typed under a different provider.
+ */
+export type ModelConfig = Record<CredentialedProvider, ProviderCredentials>;
+
+export interface AgentConfig {
+  model: ModelConfig;
+  channel: ChannelId | null;
 }
 
-export type AgentConfig = OpenclawConfig | HermesConfig;
+export function emptyModelConfig(): ModelConfig {
+  return {
+    deepseek: { apiKey: "", modelName: "" },
+    kimi: { apiKey: "", modelName: "" },
+    minimax: { apiKey: "", modelName: "" },
+  };
+}
+
+/** A provider entry is "complete" when both apiKey and modelName are non-blank. */
+export function isProviderConfigured(c: ProviderCredentials): boolean {
+  return c.apiKey.trim() !== "" && c.modelName.trim() !== "";
+}
+
+export function isModelConfigured(model: ModelConfig): boolean {
+  return (Object.values(model) as ProviderCredentials[]).some(isProviderConfigured);
+}
 
 export interface AgentState {
   id: AgentId;
@@ -50,14 +82,78 @@ export interface AgentState {
   config: AgentConfig;
 }
 
+/**
+ * Where to fetch packages from. One selector drives every package manager
+ * (npm, Homebrew, …) so users in China can swap one knob and have everything
+ * route through a domestic mirror.
+ */
+// Internal name kept generic ("accelerated") because this knob now spans more
+// than just one vendor's mirror — npm via npmmirror, Homebrew via aliyun, git
+// via gitee. Surfaced to the user as "加速源".
+export type MirrorSource = "official" | "accelerated";
+
 export interface InstallerSettings {
-  registryMirror: string;
+  mirrorSource: MirrorSource;
   workspace: string;
   gatewayPort: number;
   gatewayBind: string;
   serviceMode: "daemon" | "foreground" | "skip";
   forceReinstall: boolean;
   skipBrowser: boolean;
+}
+
+/**
+ * Mapping table — kept in one place so a Chinese mirror change in the wild
+ * only touches this object. `null` means: leave that env var unset so the
+ * underlying tool uses its own default (official endpoint).
+ */
+interface MirrorConfig {
+  npmRegistry: string;
+  brewGitRemote: string | null;
+  brewCoreGitRemote: string | null;
+  brewBottleDomain: string | null;
+  brewApiDomain: string | null;
+  /** Hermes repo clone URL (consumed by INSTALLER_HERMES_REPO_URL). */
+  hermesRepoUrl: string;
+  /** Hermes upstream installer script URL (consumed by INSTALLER_HERMES_INSTALL_URL). */
+  hermesInstallUrl: string;
+}
+
+const MIRROR_TABLE: Record<MirrorSource, MirrorConfig> = {
+  official: {
+    npmRegistry: "https://registry.npmjs.org",
+    brewGitRemote: null,
+    brewCoreGitRemote: null,
+    brewBottleDomain: null,
+    brewApiDomain: null,
+    hermesRepoUrl: "https://github.com/nousresearch/hermes-agent.git",
+    hermesInstallUrl:
+      "https://raw.githubusercontent.com/nousresearch/hermes-agent/main/scripts/install.sh",
+  },
+  accelerated: {
+    // npmmirror.com is operated by the cnpm team (Alibaba-backed) and is
+    // the de-facto Chinese npm registry endpoint.
+    npmRegistry: "https://registry.npmmirror.com",
+    brewGitRemote: "https://mirrors.aliyun.com/homebrew/brew.git",
+    brewCoreGitRemote: "https://mirrors.aliyun.com/homebrew/homebrew-core.git",
+    brewBottleDomain: "https://mirrors.aliyun.com/homebrew/homebrew-bottles",
+    // Aliyun doesn't currently mirror the formulae.brew.sh JSON API.
+    brewApiDomain: null,
+    // Gitee mirror of the same project — matches the bash script's pre-existing
+    // default, so users of the CLI flow keep working unchanged.
+    hermesRepoUrl: "https://gitee.com/cylingo-group/hermes-agent.git",
+    hermesInstallUrl:
+      "https://gitee.com/cylingo-group/hermes-agent/raw/main/scripts/install.sh",
+  },
+};
+
+export function resolveMirror(source: MirrorSource): MirrorConfig {
+  return MIRROR_TABLE[source];
+}
+
+export function isAgentConfigured(agent: AgentState): boolean {
+  const { model, channel } = agent.config;
+  return channel !== null && isModelConfigured(model);
 }
 
 // InstallerEvent is sent over the Channel from the Rust backend.
@@ -83,15 +179,24 @@ interface State {
   settings: InstallerSettings;
   showAdvanced: boolean;
   settingsTarget: AgentId | null;
+  /** App-level settings panel open state (mirror source, …). */
+  appSettingsOpen: boolean;
   uninstallTarget: AgentId | null;
-  /** Agent currently running a start/stop/restart shell action (null if none). */
+  /** Agent currently running a start/stop shell action (null if none). */
   serviceActionAgent: AgentId | null;
   /** Which action is in flight when serviceActionAgent is set. */
-  serviceActionKind: "start" | "stop" | "restart" | null;
+  serviceActionKind: "start" | "stop" | null;
   installStartedAt: number | null;
   installEndedAt: number | null;
   hostStatus: HostStatus;
   isBootstrapping: boolean;
+  /** True while the Windows banner is running bootstrap.ps1 -InstallWslOnly. */
+  wslInstalling: boolean;
+  /** Latest user-facing progress label (e.g. "正在启用 Windows 子系统功能…"),
+   *  derived from the most recent `[claw-installer]` line during wslInstalling. */
+  wslInstallStep: string | null;
+  /** Last error from installWsl, if any (e.g., UAC denied). */
+  wslInstallError: string | null;
   /** Whether the reboot-required modal is open (Windows WSL provisioning). */
   rebootModalOpen: boolean;
   /** Discriminates the modal variant: "wsl-feature" | "distro-firstrun". */
@@ -100,7 +205,6 @@ interface State {
   selectAgent: (id: AgentId) => void;
   startInstall: (ids: AgentId[]) => void;
   cancelInstall: () => void;
-  restartService: (id: AgentId) => void;
   stopService: (id: AgentId) => void;
   startService: (id: AgentId) => void;
   openUninstall: (id: AgentId) => void;
@@ -108,6 +212,8 @@ interface State {
   confirmUninstall: () => void;
   openSettings: (id: AgentId) => void;
   closeSettings: () => void;
+  openAppSettings: () => void;
+  closeAppSettings: () => void;
   updateAgentConfig: (id: AgentId, patch: Partial<AgentConfig>) => void;
   toggleAdvanced: () => void;
   updateSettings: <K extends keyof InstallerSettings>(
@@ -128,6 +234,8 @@ interface State {
   ) => void;
   refreshHostStatus: () => Promise<void>;
   bootstrap: () => Promise<void>;
+  /** Trigger Windows WSL provisioning via bootstrap.ps1 -InstallWslOnly. */
+  installWsl: () => Promise<void>;
   dismissRebootModal: () => void;
   /** Test helper: directly fire the RebootRequired state transition. */
   simulateRebootRequired: (kind: string) => void;
@@ -146,7 +254,7 @@ export const initialAgents: Record<AgentId, AgentState> = {
     port: 7841,
     currentStep: null,
     currentStepDetail: null,
-    config: { channel: "stable", provider: "anthropic" },
+    config: { model: emptyModelConfig(), channel: null },
   },
   hermes: {
     id: "hermes",
@@ -159,7 +267,7 @@ export const initialAgents: Record<AgentId, AgentState> = {
     installedAt: null,
     currentStep: null,
     currentStepDetail: null,
-    config: { engine: "chromium", userAgent: "desktop" },
+    config: { model: emptyModelConfig(), channel: null },
   },
 };
 
@@ -173,9 +281,22 @@ function stripAnsi(input: string): string {
 // ---- Settings → env var mapping (proposal §C2) -------------------------------
 function buildEnv(settings: InstallerSettings): Record<string, string> {
   const env: Record<string, string> = {};
-  if (settings.registryMirror && settings.registryMirror !== "https://registry.npmjs.org") {
-    env["INSTALLER_NPM_REGISTRY"] = settings.registryMirror;
+  const mirror = resolveMirror(settings.mirrorSource);
+  // Only forward the npm registry override when it diverges from the upstream
+  // default — keeps the env block minimal for users on the official source.
+  if (mirror.npmRegistry !== "https://registry.npmjs.org") {
+    env["INSTALLER_NPM_REGISTRY"] = mirror.npmRegistry;
   }
+  // Homebrew env knobs (macOS). All four are individually skipped when null so
+  // the bash side falls back to upstream defaults for that specific endpoint.
+  if (mirror.brewGitRemote) env["INSTALLER_BREW_GIT_REMOTE"] = mirror.brewGitRemote;
+  if (mirror.brewCoreGitRemote) env["INSTALLER_BREW_CORE_GIT_REMOTE"] = mirror.brewCoreGitRemote;
+  if (mirror.brewBottleDomain) env["INSTALLER_BREW_BOTTLE_DOMAIN"] = mirror.brewBottleDomain;
+  if (mirror.brewApiDomain) env["INSTALLER_BREW_API_DOMAIN"] = mirror.brewApiDomain;
+  // Hermes clone + upstream installer URL — always forwarded so the GUI is the
+  // single source of truth regardless of what the bash defaults happen to be.
+  env["INSTALLER_HERMES_REPO_URL"] = mirror.hermesRepoUrl;
+  env["INSTALLER_HERMES_INSTALL_URL"] = mirror.hermesInstallUrl;
   if (settings.gatewayPort !== 18789) {
     env["INSTALLER_GATEWAY_PORT"] = String(settings.gatewayPort);
   }
@@ -204,7 +325,9 @@ export const useInstaller = create<State>((set, get) => ({
   currentLogPath: null,
   logExpanded: false,
   settings: {
-    registryMirror: "https://registry.npmmirror.com",
+    // Default to the accelerated mirror set — fastest in mainland China; users
+    // on stable international networks can switch to "official" in app settings.
+    mirrorSource: "accelerated",
     workspace: "",
     gatewayPort: 7841,
     gatewayBind: "loopback",
@@ -214,13 +337,21 @@ export const useInstaller = create<State>((set, get) => ({
   },
   showAdvanced: false,
   settingsTarget: null,
+  appSettingsOpen: false,
   uninstallTarget: null,
   serviceActionAgent: null,
   serviceActionKind: null,
   installStartedAt: null,
   installEndedAt: null,
-  hostStatus: "ok",
+  // Start as "detecting" so the host-status banner shows a neutral
+  // "正在检测 WSL / 虚拟化…" state instead of nothing while bootstrap.ps1
+  // -Preflight runs (a few hundred ms on Windows, instant on macOS/Linux
+  // which immediately resolves to "ok").
+  hostStatus: "detecting",
   isBootstrapping: true,
+  wslInstalling: false,
+  wslInstallStep: null,
+  wslInstallError: null,
   rebootModalOpen: false,
   rebootModalKind: "wsl-feature",
 
@@ -302,9 +433,8 @@ export const useInstaller = create<State>((set, get) => ({
     });
   },
 
-  restartService: (id) => runLifecycle(id, "restart", set, get),
-  stopService:    (id) => runLifecycle(id, "stop",    set, get),
-  startService:   (id) => runLifecycle(id, "start",   set, get),
+  stopService:  (id) => runLifecycle(id, "stop",  set, get),
+  startService: (id) => runLifecycle(id, "start", set, get),
 
   openUninstall: (id) => set({ uninstallTarget: id }),
   closeUninstall: () => set({ uninstallTarget: null }),
@@ -405,6 +535,8 @@ export const useInstaller = create<State>((set, get) => ({
 
   openSettings: (id) => set({ settingsTarget: id }),
   closeSettings: () => set({ settingsTarget: null }),
+  openAppSettings: () => set({ appSettingsOpen: true }),
+  closeAppSettings: () => set({ appSettingsOpen: false }),
   updateAgentConfig: (id, patch) =>
     set((s) => ({
       agents: {
@@ -478,9 +610,75 @@ export const useInstaller = create<State>((set, get) => ({
 
   refreshHostStatus: async () => {
     if (!IS_TAURI_ENV) return;
+    // Flip to "detecting" so the banner repaints into its loading state while
+    // the (potentially multi-second) preflight is in flight. Without this the
+    // "重新检测" button looks unresponsive on Windows hosts.
+    set({ hostStatus: "detecting" });
     const { readHostStatus } = await import("@/api/installer");
     const payload = await readHostStatus();
     set({ hostStatus: payload.status as HostStatus });
+  },
+
+  installWsl: async () => {
+    if (!IS_TAURI_ENV) return;
+    if (get().wslInstalling) return;
+    set({
+      wslInstalling: true,
+      wslInstallStep: "正在请求管理员权限…",
+      wslInstallError: null,
+      logTail: [],
+      currentLogPath: null,
+      logExpanded: true,
+    });
+
+    const onEvent = (event: InstallerEvent) => {
+      const store = useInstaller.getState();
+      if (event.type === "LogLine") {
+        store.appendLog(event.line);
+        // Pick the latest meaningful user-facing line as the progress label.
+        // The PS script emits two flavors:
+        //   • Write-Step → "[claw-installer] <msg>" (banner + section headers)
+        //   • Write-Display → "<msg>" raw (the bulk of progress messages)
+        // and reserves Write-Log → "[debug] <msg>" for internals we should
+        // *not* show. Skip sentinels and the banner line.
+        const raw = event.line.trim();
+        if (!raw) return;
+        if (raw.startsWith("@@")) return;
+        if (raw.startsWith("[debug]")) return;
+        const bracketed = raw.match(/^\[claw-installer\]\s+(.+)$/);
+        const text = bracketed ? bracketed[1].trim() : raw;
+        if (text.startsWith("claw-installer Windows bootstrap")) return;
+        set({ wslInstallStep: text });
+        return;
+      }
+      if (event.type === "LogPath") { store.setLogPath(event.path); return; }
+      if (event.type === "StepChanged") { return; }
+      if (event.type === "RebootRequired") {
+        store.simulateRebootRequired(event.kind);
+        return;
+      }
+      if (event.type === "Finished") {
+        set({
+          wslInstalling: false,
+          wslInstallStep: null,
+          wslInstallError: event.success ? null : (event.message ?? "WSL 安装失败"),
+        });
+        if (event.success) {
+          // Re-check host status so the banner disappears (or transitions to
+          // needs-ubuntu-firstrun if WSL is now present but the distro isn't).
+          void get().refreshHostStatus();
+        }
+      }
+    };
+
+    try {
+      const { installWsl } = await import("@/api/installer");
+      await installWsl(onEvent);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("[installWsl] rejected:", msg);
+      set({ wslInstalling: false, wslInstallStep: null, wslInstallError: msg });
+    }
   },
 
   bootstrap: async () => {
@@ -509,7 +707,11 @@ export const useInstaller = create<State>((set, get) => ({
           hostStatus: hostPayload.status as HostStatus,
         }));
       }
-      // In stub/browser mode: leave default state (both not-installed, hostStatus ok)
+      // In stub/browser mode: agents stay at the default (both not-installed)
+      // but flip hostStatus from "detecting" → "ok" so the banner clears.
+      else {
+        set({ hostStatus: "ok" });
+      }
     } finally {
       set({ isBootstrapping: false });
     }
@@ -583,12 +785,11 @@ export function isAnyInstalling(state: State): boolean {
   return state.installQueue.length > 0;
 }
 
-// ---- Service lifecycle (start / stop / restart) ------------------------------
+// ---- Service lifecycle (start / stop) ----------------------------------------
 // Each action shells out to agents/<id>/<action>.sh via the Tauri backend.
 // Status flips:
-//   start   → ready    (on success)   | error (on failure)
-//   stop    → stopped  (on success)   | error (on failure)
-//   restart → ready    (on success)   | error (on failure)
+//   start → ready   (on success) | error (on failure)
+//   stop  → stopped (on success) | error (on failure)
 type Setter = (
   partial:
     | Partial<State>
@@ -598,7 +799,7 @@ type Getter = () => State;
 
 function runLifecycle(
   id: AgentId,
-  action: "start" | "stop" | "restart",
+  action: "start" | "stop",
   set: Setter,
   get: Getter
 ) {
@@ -647,12 +848,7 @@ function runLifecycle(
               ...agent,
               status: "error",
               errorMessage:
-                event.message ??
-                (action === "start"
-                  ? "启动失败"
-                  : action === "stop"
-                  ? "停止失败"
-                  : "重启失败"),
+                event.message ?? (action === "start" ? "启动失败" : "停止失败"),
               currentStep: null,
               currentStepDetail: null,
             };

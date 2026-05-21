@@ -23,10 +23,12 @@ describe("installer-store: initial state", () => {
     expect(state.agents.hermes.status).toBe("not-installed");
   });
 
-  it("starts with hostStatus ok", async () => {
+  it("starts with hostStatus detecting", async () => {
+    // Pre-bootstrap, the banner shows a neutral "正在检测…" state so the
+    // sidebar doesn't look empty while readHostStatus is in flight.
     const { useInstaller } = await import("@/store/installer-store");
     const state = useInstaller.getState();
-    expect(state.hostStatus).toBe("ok");
+    expect(state.hostStatus).toBe("detecting");
   });
 
   it("starts with isBootstrapping true", async () => {

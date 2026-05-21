@@ -57,7 +57,7 @@ row_matches_filter() {
       ;;
     hermes)
       case "$action" in
-        hermes_install_dir|hermes_home|hermes_bin|hermes_node_symlink) return 0 ;;
+        hermes_install_dir|hermes_home|hermes_bin|hermes_node_symlink|hermes_service) return 0 ;;
         uv_binary|uv_python) return 0 ;;
       esac
       return 1
@@ -137,7 +137,11 @@ plan_summary() {
   display "@@step:uninstall-plan:正在生成卸载计划…"
   local C_RESET='' T_REMOVE='[remove]' T_STRIP='[strip ]' T_KEEP='[keep  ]'
   local T_SKIP='[skip  ]' T_NOTE='[note  ]' T_UNK='[?unkwn]'
-  if [[ -t 1 ]]; then
+  # Color tags are only useful when the detail rows land on a real TTY (dry-run
+  # straight from the CLI). For non-tty / execute-mode (where the rows go to
+  # the session log file), keep them as plain ASCII so log readers don't have
+  # to deal with stray escape sequences.
+  if (( DRY_RUN )) && [[ -t 1 ]]; then
     C_RESET=$'\033[0m'
     T_REMOVE=$'\033[1;31m[remove]'"$C_RESET"
     T_STRIP=$'\033[1;33m[strip ]'"$C_RESET"
@@ -147,112 +151,142 @@ plan_summary() {
     T_UNK=$'\033[1;35m[?unkwn]'"$C_RESET"
   fi
 
-  display ""
-  display "将按以下计划卸载（最新优先）："
-  display "  Manifest:           $CLAW_MANIFEST"
-  display "  Agent filter:       ${AGENT_FILTER:-<全部>}"
-  display "  Purge workspace?    $(( PURGE_WORKSPACE )) (use --purge-workspace to enable)"
-  display "  Purge hermes-home?  $(( PURGE_HERMES_HOME )) (use --purge-hermes-home to enable)"
-  display ""
+  # `plan_emit` picks the destination based on mode:
+  # - dry-run: user is reviewing the plan, so push detail to stdout (display)
+  # - execute: every row also runs through apply_uninstall, so detail belongs
+  #   in the session log file only (log) — keeps the GUI log strip readable.
+  local plan_emit
+  if (( DRY_RUN )); then plan_emit=display; else plan_emit=log; fi
+
+  $plan_emit ""
+  $plan_emit "将按以下计划卸载（最新优先）："
+  $plan_emit "  Manifest:           $CLAW_MANIFEST"
+  $plan_emit "  Agent filter:       ${AGENT_FILTER:-<全部>}"
+  $plan_emit "  Purge workspace?    $(( PURGE_WORKSPACE )) (use --purge-workspace to enable)"
+  $plan_emit "  Purge hermes-home?  $(( PURGE_HERMES_HOME )) (use --purge-hermes-home to enable)"
+  $plan_emit ""
+
+  # Tallies, surfaced after the detail block so users running execute mode get
+  # one short user-facing summary line instead of dozens of bracket-tagged rows.
+  local n_remove=0 n_strip=0 n_keep=0 n_skip=0 n_note=0 n_unk=0
   while IFS=$'\t' read -r _ts action target status _note; do
     row_matches_filter "$action" "$target" || continue
     case "$action" in
       system_pkg)
-        display "  $T_SKIP system pkg $target ($status) — left in place"
+        $plan_emit "  $T_SKIP system pkg $target ($status) — left in place"
+        n_skip=$(( n_skip + 1 ))
         ;;
       fnm_binary)
         if [[ "$status" == "preexisting" ]]; then
-          display "  $T_SKIP fnm at $target (preexisting)"
+          $plan_emit "  $T_SKIP fnm at $target (preexisting)"; n_skip=$(( n_skip + 1 ))
         else
-          display "  $T_REMOVE fnm dir $target"
+          $plan_emit "  $T_REMOVE fnm dir $target"; n_remove=$(( n_remove + 1 ))
         fi
         ;;
       fnm_node)
         if [[ "$status" == "preexisting" ]]; then
-          display "  $T_SKIP node v$target (preexisting)"
+          $plan_emit "  $T_SKIP node v$target (preexisting)"; n_skip=$(( n_skip + 1 ))
         else
-          display "  $T_REMOVE fnm node v$target"
+          $plan_emit "  $T_REMOVE fnm node v$target"; n_remove=$(( n_remove + 1 ))
         fi
         ;;
       pnpm_global_pkg)
-        display "  $T_REMOVE pnpm global pkg $target"
+        $plan_emit "  $T_REMOVE pnpm global pkg $target"; n_remove=$(( n_remove + 1 ))
         ;;
       corepack_pnpm)
-        display "  $T_NOTE $target was activated via corepack (left in place)"
+        $plan_emit "  $T_NOTE $target was activated via corepack (left in place)"
+        n_note=$(( n_note + 1 ))
         ;;
       pnpm_home)
         if [[ "$status" == "preexisting" ]]; then
-          display "  $T_SKIP PNPM_HOME $target (preexisting)"
+          $plan_emit "  $T_SKIP PNPM_HOME $target (preexisting)"; n_skip=$(( n_skip + 1 ))
         else
-          display "  $T_REMOVE PNPM_HOME $target"
+          $plan_emit "  $T_REMOVE PNPM_HOME $target"; n_remove=$(( n_remove + 1 ))
         fi
         ;;
       npmrc_block|shell_rc_block)
-        display "  $T_STRIP managed block from $target"
+        $plan_emit "  $T_STRIP managed block from $target"; n_strip=$(( n_strip + 1 ))
         ;;
       openclaw_service)
-        display "  $T_REMOVE openclaw service: $target"
+        $plan_emit "  $T_REMOVE openclaw service: $target"; n_remove=$(( n_remove + 1 ))
+        ;;
+      hermes_service)
+        $plan_emit "  $T_REMOVE hermes service: $target"; n_remove=$(( n_remove + 1 ))
         ;;
       openclaw_config_file)
-        display "  $T_REMOVE openclaw config file $target"
+        $plan_emit "  $T_REMOVE openclaw config file $target"; n_remove=$(( n_remove + 1 ))
         ;;
       openclaw_workspace)
         if [[ "$status" == "preexisting" ]]; then
-          display "  $T_KEEP openclaw workspace $target (preexisting — not ours to remove)"
+          $plan_emit "  $T_KEEP openclaw workspace $target (preexisting — not ours to remove)"
+          n_keep=$(( n_keep + 1 ))
         elif (( PURGE_WORKSPACE )); then
-          display "  $T_REMOVE openclaw workspace $target"
+          $plan_emit "  $T_REMOVE openclaw workspace $target"; n_remove=$(( n_remove + 1 ))
         else
-          display "  $T_KEEP openclaw workspace $target (use --purge-workspace to remove)"
+          $plan_emit "  $T_KEEP openclaw workspace $target (use --purge-workspace to remove)"
+          n_keep=$(( n_keep + 1 ))
         fi
         ;;
       uv_binary)
         if [[ "$status" == "preexisting" ]]; then
-          display "  $T_SKIP uv at $target (preexisting)"
+          $plan_emit "  $T_SKIP uv at $target (preexisting)"; n_skip=$(( n_skip + 1 ))
         else
-          display "  $T_REMOVE uv binary $target"
+          $plan_emit "  $T_REMOVE uv binary $target"; n_remove=$(( n_remove + 1 ))
         fi
         ;;
       uv_python)
         if [[ "$status" == "preexisting" ]]; then
-          display "  $T_SKIP uv-managed Python $target (preexisting)"
+          $plan_emit "  $T_SKIP uv-managed Python $target (preexisting)"; n_skip=$(( n_skip + 1 ))
         else
-          display "  $T_REMOVE uv python uninstall $target"
+          $plan_emit "  $T_REMOVE uv python uninstall $target"; n_remove=$(( n_remove + 1 ))
         fi
         ;;
       hermes_node_symlink)
         if [[ "$status" == "preexisting" ]]; then
-          display "  $T_SKIP hermes Node dir $target (preexisting, owned by hermes)"
+          $plan_emit "  $T_SKIP hermes Node dir $target (preexisting, owned by hermes)"
+          n_skip=$(( n_skip + 1 ))
         else
-          display "  $T_REMOVE hermes Node symlink dir $target"
+          $plan_emit "  $T_REMOVE hermes Node symlink dir $target"; n_remove=$(( n_remove + 1 ))
         fi
         ;;
       hermes_install_dir)
         if [[ "$status" == "preexisting" ]]; then
-          display "  $T_SKIP hermes install dir $target (preexisting)"
+          $plan_emit "  $T_SKIP hermes install dir $target (preexisting)"; n_skip=$(( n_skip + 1 ))
         else
-          display "  $T_REMOVE hermes install dir $target"
+          $plan_emit "  $T_REMOVE hermes install dir $target"; n_remove=$(( n_remove + 1 ))
         fi
         ;;
       hermes_bin)
         if [[ "$status" == "preexisting" ]]; then
-          display "  $T_SKIP hermes binary $target (preexisting)"
+          $plan_emit "  $T_SKIP hermes binary $target (preexisting)"; n_skip=$(( n_skip + 1 ))
         else
-          display "  $T_REMOVE hermes binary $target"
+          $plan_emit "  $T_REMOVE hermes binary $target"; n_remove=$(( n_remove + 1 ))
         fi
         ;;
       hermes_home)
         if [[ "$status" == "preexisting" ]]; then
-          display "  $T_KEEP hermes home $target (preexisting — not ours to remove)"
+          $plan_emit "  $T_KEEP hermes home $target (preexisting — not ours to remove)"
+          n_keep=$(( n_keep + 1 ))
         elif (( PURGE_HERMES_HOME )); then
-          display "  $T_REMOVE hermes home $target"
+          $plan_emit "  $T_REMOVE hermes home $target"; n_remove=$(( n_remove + 1 ))
         else
-          display "  $T_KEEP hermes home $target (use --purge-hermes-home to remove)"
+          $plan_emit "  $T_KEEP hermes home $target (use --purge-hermes-home to remove)"
+          n_keep=$(( n_keep + 1 ))
         fi
         ;;
-      *) display "  $T_UNK $action $target" ;;
+      *)
+        $plan_emit "  $T_UNK $action $target"; n_unk=$(( n_unk + 1 ))
+        ;;
     esac
   done < <(rows_reverse)
-  display ""
+  $plan_emit ""
+
+  # Execute mode: one compact line on stdout so the GUI shows a single-line
+  # plan summary instead of the verbose row-by-row breakdown.
+  if (( ! DRY_RUN )); then
+    local total=$(( n_remove + n_strip + n_keep + n_skip + n_note + n_unk ))
+    display "  计划：${total} 项（移除 ${n_remove} · 修改 ${n_strip} · 保留 ${n_keep} · 跳过 ${n_skip}）"
+  fi
 }
 
 apply_uninstall() {
@@ -303,6 +337,14 @@ apply_uninstall() {
           run_cmd openclaw gateway uninstall
         else
           log "  openclaw not on PATH — cannot stop/uninstall service $target"
+        fi
+        ;;
+      hermes_service)
+        if command -v hermes >/dev/null 2>&1; then
+          run_cmd hermes gateway stop
+          run_cmd hermes gateway uninstall
+        else
+          log "  hermes not on PATH — cannot stop/uninstall service $target"
         fi
         ;;
       openclaw_config_file)

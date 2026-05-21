@@ -231,8 +231,13 @@ main() {
   for arg in "$@"; do
     case "$arg" in
       --debug) DEBUG_MODE=1 ;;
+      --trace) export INSTALLER_TRACE=1 ;;
     esac
   done
+
+  # Activate xtrace if --trace was passed on CLI (env-var path already
+  # triggered inside common.sh at source time).
+  _claw_enable_trace
 
   # Start debug tail AFTER fd 3 is open (common.sh opens it at source time)
   if [[ "$DEBUG_MODE" == "1" ]]; then
