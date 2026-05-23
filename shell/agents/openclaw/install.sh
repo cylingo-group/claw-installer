@@ -36,7 +36,7 @@ source "$__OC_DIR/../../lib/common.sh"
 # Env-prep steps openclaw relies on. install.sh reads this when collecting
 # the union across all selected agents. Order must be dependency-correct;
 # later steps may rely on earlier ones (e.g. node needs fnm).
-ENV_STEPS=(base-deps fnm node pnpm npmrc shell-rc)
+ENV_STEPS=(base-deps fnm node pnpm npmrc bubbolink shell-rc)
 
 SERVICE_MODE="${INSTALLER_SERVICE_MODE:-daemon}"
 GATEWAY_PORT="${INSTALLER_GATEWAY_PORT:-18789}"
