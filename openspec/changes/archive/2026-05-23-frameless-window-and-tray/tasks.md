@@ -75,15 +75,15 @@
 
 ## 9. Verification — Windows Manual Checks
 
-- [ ] 9.1 Launch app on Windows: confirm no native caption buttons; custom `−` and `×` buttons visible top-right
-- [ ] 9.2 Hover over `−` button: subtle background fill appears
-- [ ] 9.3 Hover over `×` button: red background (#E81123) and white glyph appear
-- [ ] 9.4 Click `−` button: window minimizes to taskbar
-- [ ] 9.5 Click `×` button: window hides; tray icon remains in notification area
-- [ ] 9.6 Press Alt+F4: window hides (does not quit)
-- [ ] 9.7 Click-drag titlebar background: window moves
-- [ ] 9.8 Right-click tray icon: menu appears with all six items
-- [ ] 9.9 Double-click tray icon: window shows and gains focus
-- [ ] 9.10 Click "Open Claw Installer": window shows
-- [ ] 9.11 Click "Start All Agents" with agents installed: notification confirms start
-- [ ] 9.12 Click "Quit Claw Installer": process exits, tray icon disappears
+- [x] 9.1 Launch app on Windows: confirm no native caption buttons; custom `−` and `×` buttons visible top-right
+- [x] 9.2 Hover over `−` button: subtle background fill appears
+- [x] 9.3 Hover over `×` button: red background (#E81123) and white glyph appear
+- [x] 9.4 Click `−` button: window minimizes to taskbar
+- [x] 9.5 Click `×` button: window hides; tray icon remains in notification area
+- [x] 9.6 Press Alt+F4: window hides (does not quit)
+- [x] 9.7 Click-drag titlebar background: window moves
+- [x] 9.8 Right-click tray icon: menu appears with all six items
+- [x] 9.9 Double-click tray icon: window shows and gains focus
+- [x] 9.10 Click "Open Claw Installer": window shows
+- [x] 9.11 Click "Start All Agents" with agents installed: notification confirms start
+- [x] 9.12 Click "Quit Claw Installer": process exits, tray icon disappears

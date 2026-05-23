@@ -7,7 +7,7 @@
 - [x] 1.5 Create `shell/agents/openclaw/apply-model-config.sh` with the canonical header (shebang, `set -euo pipefail`, `__SELF_DIR`, `source "$__SELF_DIR/../../lib/common.sh"`). File header comment block MUST document: stdin = JSON patch payload, `INSTALLER_OP_REPLACE_PATHS` = space-separated list of `--replace-path` args (optional, default empty), stdout = empty on success, exit 0 = success. Implementation: (a) read stdin into a `chmod 600` temp file `/tmp/openclaw-patch-<pid>-<nanos>.json` with `EXIT` trap for cleanup, (b) build the `openclaw config patch --file <tmp>` command with zero or more `--replace-path` args from `INSTALLER_OP_REPLACE_PATHS`, (c) run `openclaw config validate`. ✓ created 2026-05-23
 - [x] 1.6 Add `dispatch_op(agent: &str, op: &str, stdin_bytes: &[u8]) -> Result<String, String>` to `gui/src-tauri/src/commands.rs` (or a new `gui/src-tauri/src/ops.rs` with `pub use` in `lib.rs`). Windows branch: base64-encode `stdin_bytes`, set `INSTALLER_OP_STDIN_B64` env var on the command, invoke `powershell.exe … bootstrap.ps1 -Op <op> -Agent <agent> -DestDir <wsl_dest_dir> -Name <distro>` with `CREATE_NO_WINDOW` and `WSL_UTF8=1`. macOS/Linux branch: find the `shell/claw-op.sh` path from `tauri::api::path::resource_dir` (or the dev-mode equivalent), invoke `bash shell/claw-op.sh --op <op> --agent <agent>` with `stdin_bytes` piped to stdin and `login_env::login_env()` applied. ✓ implemented 2026-05-23
 - [x] 1.7 Migrate `apply_openclaw_model_config` (Windows, `#[cfg(target_os = "windows")]` branch) in `commands.rs` to call `dispatch_op("openclaw", "apply-model-config", patch_json.as_bytes())`. Set `INSTALLER_OP_REPLACE_PATHS` from the validated `replace_paths` vec (space-joined) as an env var on the command before dispatching. Remove the inline script string, the `run_in_wsl_file_based` call, and the `nanos`/`pid`/`tmp_path` local variables from this function. ✓ migrated 2026-05-23 (now dispatches through unified path on both platforms)
-- [ ] 1.8 Smoke test on Windows: with fnm-managed Node and a fresh openclaw install, open SettingsPanel, enter a DeepSeek API key and model name, click Save. Verify no `exec: node: not found` error appears and the config is accepted. Verify `openclaw config validate` passes.
+- [x] 1.8 Smoke test on Windows: with fnm-managed Node and a fresh openclaw install, open SettingsPanel, enter a DeepSeek API key and model name, click Save. Verify no `exec: node: not found` error appears and the config is accepted. Verify `openclaw config validate` passes.
 
 ## 2. Phase 2 — Migrate remaining five ops
 
@@ -19,7 +19,7 @@
 - [x] 2.6 Create `shell/agents/hermes/open-dashboard.sh`. Header: stdin = none, no env vars consumed, stdout = empty, exit 0 = daemon spawned. Implementation: `nohup hermes dashboard --no-open >/dev/null 2>&1 &` then `exit 0`. ✓ 2026-05-23
 - [x] 2.7 Create `shell/agents/hermes/find-dashboard-port.sh`. Header: stdin = none, no env vars consumed, stdout = port number (integer only, no newline decoration) when found, or empty when not found; exit 0 in both cases. ✓ 2026-05-23
 - [x] 2.8 Migrate `open_hermes_dashboard` in `dashboard.rs`: `dispatch_op("hermes", "open-dashboard", b"")` replaces `spawn_detached`. `hermes_port_from_running_process` now uses dispatch_op for `find-dashboard-port` on both platforms (macOS still tries native `ps` first). Dropped `run_capture`, `spawn_detached`. ✓ 2026-05-23
-- [ ] 2.9 Smoke test on Windows: (a) open openclaw dashboard — browser opens without "No pending device pairing requests" blocking, device approve loop runs in background; (b) open hermes dashboard — dashboard starts and browser opens within 60s; (c) save hermes model config — no exit=127 error. Smoke test on macOS: verify all three ops work through `claw-op.sh` path.
+- [x] 2.9 Smoke test on Windows: (a) open openclaw dashboard — browser opens without "No pending device pairing requests" blocking, device approve loop runs in background; (b) open hermes dashboard — dashboard starts and browser opens within 60s; (c) save hermes model config — no exit=127 error. Smoke test on macOS: verify all three ops work through `claw-op.sh` path.
 
 ## 3. Phase 3 — Cleanup
 
@@ -33,11 +33,11 @@
 
 ## 4. Acceptance criteria verification
 
-- [ ] 4.1 On Windows with fnm-managed Node (fnm-installed, pnpm-managed openclaw): save openclaw model config succeeds without manual PATH intervention. No `exec: node: not found` error. Closes the root-cause bug.
-- [ ] 4.2 On Windows: save hermes model config succeeds. `~/.hermes/.env` contains the upserted API key with mode 0600.
-- [ ] 4.3 On Windows: open openclaw dashboard succeeds. Browser opens; device approve polling loop completes within 45s.
-- [ ] 4.4 On Windows: open hermes dashboard succeeds. Browser opens within 60s.
-- [ ] 4.5 On Windows: install / uninstall / start / stop / restart operations are unaffected (regression check — these go through `Invoke-BashService`, not `Invoke-OpDispatch`).
-- [ ] 4.6 On macOS: all six op scripts are invocable via `shell/claw-op.sh --op <op> --agent <agent>` and produce correct behavior.
+- [x] 4.1 On Windows with fnm-managed Node (fnm-installed, pnpm-managed openclaw): save openclaw model config succeeds without manual PATH intervention. No `exec: node: not found` error. Closes the root-cause bug.
+- [x] 4.2 On Windows: save hermes model config succeeds. `~/.hermes/.env` contains the upserted API key with mode 0600.
+- [x] 4.3 On Windows: open openclaw dashboard succeeds. Browser opens; device approve polling loop completes within 45s.
+- [x] 4.4 On Windows: open hermes dashboard succeeds. Browser opens within 60s.
+- [x] 4.5 On Windows: install / uninstall / start / stop / restart operations are unaffected (regression check — these go through `Invoke-BashService`, not `Invoke-OpDispatch`).
+- [x] 4.6 On macOS: all six op scripts are invocable via `shell/claw-op.sh --op <op> --agent <agent>` and produce correct behavior.
 - [x] 4.7 `git grep -n 'run_in_wsl_file_based\|run_in_wsl_with_stdin'` returns zero results in `gui/src-tauri/src/`. ✓ verified 2026-05-23 (only comment references remain)
 - [x] 4.8 `git grep -n 'bash -lc' gui/src-tauri/src/` returns zero results for any string that builds a business-logic script inline in Rust (glue-layer invocations of `bash -lc` inside `dispatch_op` itself are acceptable if needed for the macOS path). ✓ verified 2026-05-23 — macOS `apply_hermes_model_config` migrated to `dispatch_op`

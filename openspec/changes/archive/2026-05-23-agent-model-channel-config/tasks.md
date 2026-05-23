@@ -131,7 +131,7 @@ Replace the placeholder empty-state `<div className="flex flex-1 flex-col items-
 
 The `<header>` (back button + agent name + " 配置" title) is unchanged.
 
-**T3.5 — Smoke test in stub mode** [manual verification pending]
+**T3.5 — Smoke test in stub mode** [x]
 
 - Open the SettingsPanel for either agent.
 - Select DeepSeek → API Key field and Model Name field appear; "获取 API Key →" link appears.
