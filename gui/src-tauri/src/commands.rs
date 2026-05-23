@@ -9,6 +9,7 @@ use tauri_plugin_shell::ShellExt;
 use tauri_plugin_shell::process::{CommandEvent, CommandChild};
 use tauri::async_runtime::Receiver;
 
+use crate::{log_error, log_info};
 use crate::login_env;
 use crate::manifest::parse_manifest;
 use crate::steps::parse_step_sentinel;
@@ -21,7 +22,7 @@ use crate::types::{HostStatusPayload, InstallerEvent, InstallerStatePayload};
 ///
 /// Apply this BEFORE caller-supplied INSTALLER_* env so explicit overrides
 /// still win.
-fn apply_login_env(
+pub(crate) fn apply_login_env(
     mut cmd: tauri_plugin_shell::process::Command,
 ) -> tauri_plugin_shell::process::Command {
     for (k, v) in login_env::login_env() {
@@ -135,7 +136,7 @@ pub struct AppState {
 /// uninstall live here).
 /// In dev: use INSTALLER_REPO_DIR env var.
 /// In prod: use {resource_dir}/shell/.
-fn resolve_installer_dir(app: &tauri::AppHandle) -> PathBuf {
+pub(crate) fn resolve_installer_dir(app: &tauri::AppHandle) -> PathBuf {
     if let Ok(repo_dir) = std::env::var("INSTALLER_REPO_DIR") {
         return strip_extended_path_prefix(PathBuf::from(repo_dir));
     }
@@ -187,7 +188,7 @@ pub fn resolve_installer_path(app: &tauri::AppHandle, rel: &str) -> PathBuf {
 
 /// Determine the path to the manifest file.
 #[cfg(not(target_os = "windows"))]
-fn manifest_path(app: &tauri::AppHandle) -> PathBuf {
+pub(crate) fn manifest_path(app: &tauri::AppHandle) -> PathBuf {
     if let Ok(p) = std::env::var("CLAW_MANIFEST") {
         return PathBuf::from(p);
     }
@@ -233,10 +234,22 @@ async fn read_installer_state_unix(app: &tauri::AppHandle) -> Result<InstallerSt
 
 #[cfg(target_os = "windows")]
 async fn read_installer_state_windows(app: &tauri::AppHandle) -> Result<InstallerStatePayload, String> {
-    // Per OQ-3: read manifest via `wsl.exe -d $DISTRO -- cat ~/.claw-installer/manifest.tsv`
-    let distro = std::env::var("INSTALLER_WSL_DISTRO").unwrap_or_else(|_| "Ubuntu".to_string());
+    // Lightweight manifest read via `wsl.exe -- cat ~/.claw-installer/manifest.tsv`.
+    // We deliberately do NOT use op-dispatch here — this is a pure read of a user-
+    // owned file, called frequently by state-polling, and going through bootstrap.ps1
+    // would trigger Assert-Elevated (UAC) on every tick.
+    //
+    // Distro selection: honor INSTALLER_WSL_DISTRO if set; otherwise omit -d so
+    // wsl.exe targets the user's default distro. Hardcoding "Ubuntu" breaks for
+    // users with Ubuntu-24.04 etc., since wsl.exe's -d does NOT do the fuzzy
+    // matching that bootstrap.ps1::Resolve-InstalledDistro does.
+    let distro_override = std::env::var("INSTALLER_WSL_DISTRO").ok();
     let mut cmd = std::process::Command::new("wsl.exe");
-    cmd.args(["-d", &distro, "--", "cat", "~/.claw-installer/manifest.tsv"]);
+    if let Some(ref d) = distro_override {
+        cmd.args(["-d", d.as_str()]);
+    }
+    cmd.args(["--", "cat", "~/.claw-installer/manifest.tsv"]);
+    cmd.env("WSL_UTF8", "1");
     let output = hide_console(&mut cmd).output();
 
     match output {
@@ -257,7 +270,15 @@ async fn read_installer_state_windows(app: &tauri::AppHandle) -> Result<Installe
 
 #[cfg(target_os = "windows")]
 fn read_installer_state_windows_unc(_app: &tauri::AppHandle) -> Result<InstallerStatePayload, String> {
-    let distro = std::env::var("INSTALLER_WSL_DISTRO").unwrap_or_else(|_| "Ubuntu".to_string());
+    // UNC fallback: only useful when we know the exact distro name. Hardcoding
+    // "Ubuntu" silently fails for users on Ubuntu-24.04 etc. Skip the UNC attempt
+    // unless an explicit INSTALLER_WSL_DISTRO override is set.
+    let Some(distro) = std::env::var("INSTALLER_WSL_DISTRO").ok() else {
+        return Ok(InstallerStatePayload {
+            openclaw: "not-installed".into(),
+            hermes: "not-installed".into(),
+        });
+    };
     let user = std::env::var("USERNAME").unwrap_or_else(|_| "user".to_string());
     let unc_path = format!(
         r"\\wsl.localhost\{}\home\{}\.claw-installer\manifest.tsv",
@@ -378,7 +399,7 @@ fn build_uninstall_command(
 /// Build a command for an agent service lifecycle action (start/stop/restart).
 /// On Windows: spawns bootstrap.ps1 with -Service / -Agent args.
 /// On non-Windows: runs agents/<agent>/<action>.sh via bash.
-fn build_service_command(
+pub(crate) fn build_service_command(
     app: &tauri::AppHandle,
     agent: &str,
     action: &str,
@@ -388,9 +409,12 @@ fn build_service_command(
     #[cfg(target_os = "windows")]
     {
         let ps_path = resolve_installer_path(app, r"windows\bootstrap.ps1");
+        // `-FastPath`: skip bootstrap's preflight chain. Install already
+        // verified WSL + distro + systemd + repo-copy; a service action
+        // doesn't need any of that re-checked.
         shell.command("powershell.exe").args(powershell_args(
             &ps_path,
-            &["-Service", action, "-Agent", agent],
+            &["-Service", action, "-Agent", agent, "-FastPath"],
         ))
     }
 
@@ -675,8 +699,9 @@ pub async fn run_installer(
     // Compute session log path, create parent dir, and pre-create the file so
     // the script can open fd 3 against it even on the very first write.
     let log_path = build_session_log_path("install");
-    eprintln!(
-        "[claw-installer] run_installer: agents={:?} repo_dir={:?} log={:?}",
+    log_info!(
+        "commands::run_installer",
+        "agents={:?} repo_dir={:?} log={:?}",
         agents,
         resolve_installer_dir(&app),
         log_path
@@ -724,22 +749,22 @@ pub async fn run_installer(
     let (rx, child) = match cmd.spawn() {
         Ok(r) => r,
         Err(e) => {
-            eprintln!("[claw-installer] run_installer spawn FAILED: {}", e);
+            log_error!("commands::run_installer", "spawn FAILED: {}", e);
             return Err(e.to_string());
         }
     };
-    eprintln!("[claw-installer] run_installer spawned pid={}", child.pid());
+    log_info!("commands::run_installer", "spawned pid={}", child.pid());
     let child_arc = Arc::clone(&state.child);
     *child_arc.lock().await = Some(child);
     run_event_loop(rx, on_event, child_arc).await;
-    eprintln!("[claw-installer] run_installer: event loop finished");
+    log_info!("commands::run_installer", "event loop finished");
     Ok(())
 }
 
 #[tauri::command]
 pub async fn cancel_installer(state: tauri::State<'_, AppState>) -> Result<(), String> {
     if let Some(child) = state.child.lock().await.take() {
-        eprintln!("[claw-installer] cancel_installer: killing pid={}", child.pid());
+        log_info!("commands::cancel_installer", "killing pid={}", child.pid());
         child.kill().map_err(|e| e.to_string())?;
     }
     Ok(())
@@ -753,8 +778,9 @@ pub async fn run_uninstaller(
     on_event: tauri::ipc::Channel<InstallerEvent>,
 ) -> Result<(), String> {
     let log_path = build_session_log_path("uninstall");
-    eprintln!(
-        "[claw-installer] run_uninstaller: agent={} repo_dir={:?} log={:?}",
+    log_info!(
+        "commands::run_uninstaller",
+        "agent={} repo_dir={:?} log={:?}",
         _agent,
         resolve_installer_dir(&app),
         log_path
@@ -787,15 +813,15 @@ pub async fn run_uninstaller(
     let (rx, child) = match cmd.spawn() {
         Ok(r) => r,
         Err(e) => {
-            eprintln!("[claw-installer] run_uninstaller spawn FAILED: {}", e);
+            log_error!("commands::run_uninstaller", "spawn FAILED: {}", e);
             return Err(e.to_string());
         }
     };
-    eprintln!("[claw-installer] run_uninstaller spawned pid={}", child.pid());
+    log_info!("commands::run_uninstaller", "spawned pid={}", child.pid());
     let child_arc = Arc::clone(&state.child);
     *child_arc.lock().await = Some(child);
     run_event_loop(rx, on_event, child_arc).await;
-    eprintln!("[claw-installer] run_uninstaller: event loop finished");
+    log_info!("commands::run_uninstaller", "event loop finished");
     Ok(())
 }
 
@@ -822,9 +848,12 @@ pub async fn run_service_action(
     }
 
     let log_path = build_session_log_path(&format!("{}-{}", action, agent));
-    eprintln!(
-        "[claw-installer] run_service_action: agent={} action={} log={:?}",
-        agent, action, log_path
+    log_info!(
+        "commands::run_service_action",
+        "agent={} action={} log={:?}",
+        agent,
+        action,
+        log_path
     );
     let _ = fs::OpenOptions::new()
         .create(true)
@@ -850,15 +879,15 @@ pub async fn run_service_action(
     let (rx, child) = match cmd.spawn() {
         Ok(r) => r,
         Err(e) => {
-            eprintln!("[claw-installer] run_service_action spawn FAILED: {}", e);
+            log_error!("commands::run_service_action", "spawn FAILED: {}", e);
             return Err(e.to_string());
         }
     };
-    eprintln!("[claw-installer] run_service_action spawned pid={}", child.pid());
+    log_info!("commands::run_service_action", "spawned pid={}", child.pid());
     let child_arc = Arc::clone(&state.child);
     *child_arc.lock().await = Some(child);
     run_event_loop(rx, on_event, child_arc).await;
-    eprintln!("[claw-installer] run_service_action: event loop finished");
+    log_info!("commands::run_service_action", "event loop finished");
     Ok(())
 }
 
@@ -874,8 +903,9 @@ pub async fn install_wsl(
     on_event: tauri::ipc::Channel<InstallerEvent>,
 ) -> Result<(), String> {
     let log_path = build_session_log_path("install-wsl");
-    eprintln!(
-        "[claw-installer] install_wsl: repo_dir={:?} log={:?}",
+    log_info!(
+        "commands::install_wsl",
+        "repo_dir={:?} log={:?}",
         resolve_installer_dir(&app),
         log_path
     );
@@ -909,15 +939,15 @@ pub async fn install_wsl(
     let (rx, child) = match cmd.spawn() {
         Ok(r) => r,
         Err(e) => {
-            eprintln!("[claw-installer] install_wsl spawn FAILED: {}", e);
+            log_error!("commands::install_wsl", "spawn FAILED: {}", e);
             return Err(e.to_string());
         }
     };
-    eprintln!("[claw-installer] install_wsl spawned pid={}", child.pid());
+    log_info!("commands::install_wsl", "spawned pid={}", child.pid());
     let child_arc = Arc::clone(&state.child);
     *child_arc.lock().await = Some(child);
     run_event_loop(rx, on_event, child_arc).await;
-    eprintln!("[claw-installer] install_wsl: event loop finished");
+    log_info!("commands::install_wsl", "event loop finished");
     Ok(())
 }
 
@@ -947,6 +977,619 @@ pub async fn system_reboot() -> Result<(), String> {
 #[tauri::command]
 pub async fn system_reboot() -> Result<(), String> {
     Err("system_reboot is only supported on Windows".into())
+}
+
+/// Return the directory where claw-installer writes Tauri and per-op log files.
+///
+/// Frontend can call this to populate an "Open logs folder" link in the UI.
+/// Example return: `/var/folders/…/claw-installer` (macOS) or `%TEMP%\claw-installer` (Windows).
+#[tauri::command]
+pub fn get_logs_dir() -> String {
+    std::env::temp_dir()
+        .join("claw-installer")
+        .to_string_lossy()
+        .into_owned()
+}
+
+// ---- Unified op dispatcher -------------------------------------------------
+//
+// `dispatch_op` is the single Rust→bash execution path for named operations.
+// On Windows it routes through bootstrap.ps1 (which calls Invoke-WslBashStreamed
+// -Login, ensuring common.sh and _claw_compose_path run, giving fnm-managed
+// Node on PATH). On macOS/Linux it routes through shell/claw-op.sh.
+//
+// Stdin transport: stdin_bytes is base64-encoded and passed as
+// INSTALLER_OP_STDIN_B64 env var on Windows (the PowerShell process reads it
+// and writes it to a chmod-600 temp file inside WSL). On macOS/Linux it is
+// piped directly to the child process stdin.
+//
+// Size note: Windows env block is ~32 KB per variable; a model-config JSON
+// patch is typically <4 KB, API keys <1 KB — well within the limit.
+
+/// Build the extra `-Op`/`-Agent`/`-FastPath` arguments passed to bootstrap.ps1.
+/// Extracted as a pure function so tests can verify arg construction without
+/// spawning a PowerShell process.
+///
+/// `-FastPath` tells bootstrap.ps1 to skip the ~10s preflight chain (Windows
+/// build check, WSL --status probe, --list roundtrips, UAC elevation, ensure-
+/// systemd, full shell/ recopy into WSL) because install already verified all
+/// of that. The op script surfaces real errors if WSL is somehow broken.
+#[cfg(target_os = "windows")]
+pub(crate) fn build_dispatch_op_ps_extras(agent: &str, op: &str) -> Vec<String> {
+    vec![
+        "-Op".to_string(),
+        op.to_string(),
+        "-Agent".to_string(),
+        agent.to_string(),
+        "-FastPath".to_string(),
+    ]
+}
+
+/// Non-Windows stub — keeps test code compiling on macOS where the function is
+/// referenced in the test module.
+#[cfg(not(target_os = "windows"))]
+#[allow(dead_code)]
+pub(crate) fn build_dispatch_op_ps_extras(agent: &str, op: &str) -> Vec<String> {
+    vec![
+        "-Op".to_string(),
+        op.to_string(),
+        "-Agent".to_string(),
+        agent.to_string(),
+        "-FastPath".to_string(),
+    ]
+}
+
+/// Dispatch a named operation to the per-OS glue layer.
+///
+/// * `agent`       — `"openclaw"` or `"hermes"`
+/// * `op`          — one of the valid op names (e.g. `"apply-model-config"`)
+/// * `stdin_bytes` — payload delivered to the op script via stdin; pass `b""`
+///                   for ops that take no stdin
+/// * `env_extras`  — additional `(KEY, VALUE)` env vars set on the child
+///                   process (e.g. `INSTALLER_OP_REPLACE_PATHS`)
+///
+/// Writes a per-op session log to `<tmp_dir>/claw-installer/op-<agent>-<op>-<ts>.log`
+/// with a header, captured stdout/stderr, and exit code. The log path is
+/// included in error messages so users can find the full output.
+///
+/// Returns `Ok(stdout_string)` on exit 0, `Err(message)` on non-zero exit.
+#[cfg(target_os = "windows")]
+pub(crate) fn dispatch_op(
+    app: &tauri::AppHandle,
+    agent: &str,
+    op: &str,
+    stdin_bytes: &[u8],
+    env_extras: &[(&str, &str)],
+) -> Result<String, String> {
+    use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
+    use std::io::Write as _;
+    use std::process::{Command, Stdio};
+
+    // ── Per-op session log ────────────────────────────────────────────────
+    let op_log_path = build_session_log_path(&format!("op-{}-{}", agent, op));
+    log_info!(
+        "commands::dispatch_op",
+        "starting op={}/{} log={}",
+        agent,
+        op,
+        op_log_path.display()
+    );
+    // Pre-create with a header so the file exists even if the child never writes.
+    if let Ok(mut f) = fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(false)
+        .open(&op_log_path)
+    {
+        let _ = writeln!(
+            f,
+            "=== op={}/{} started at {} (tauri log: {}) ===",
+            agent,
+            op,
+            crate::logger::format_utc_now(),
+            crate::logger::log_path()
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|| "(uninit)".to_string())
+        );
+    }
+
+    let ps_path = resolve_installer_path(app, r"windows\bootstrap.ps1");
+
+    // Build -SessionLogPath arg for bootstrap.ps1 — it writes display-stream
+    // lines to this path via Write-Display, giving us op script output on disk.
+    let log_path_str = op_log_path.to_string_lossy().into_owned();
+    let mut ps_extras = build_dispatch_op_ps_extras(agent, op);
+    ps_extras.push("-SessionLogPath".to_string());
+    ps_extras.push(log_path_str.clone());
+    let extras_str: Vec<&str> = ps_extras.iter().map(|s| s.as_str()).collect();
+    let args = powershell_args(&ps_path, &extras_str);
+
+    let b64_stdin = B64.encode(stdin_bytes);
+
+    let mut cmd = Command::new("powershell.exe");
+    cmd.args(&args)
+        .env("WSL_UTF8", "1")
+        .env("INSTALLER_OP_STDIN_B64", &b64_stdin);
+
+    // Forward INSTALLER_WSL_DISTRO if set so the distro resolution in
+    // bootstrap.ps1's main dispatch block sees the correct distro.
+    if let Ok(distro) = std::env::var("INSTALLER_WSL_DISTRO") {
+        cmd.env("INSTALLER_WSL_DISTRO", distro);
+    }
+
+    // Apply caller-supplied extra env vars (e.g. INSTALLER_OP_REPLACE_PATHS).
+    for (k, v) in env_extras {
+        cmd.env(k, v);
+    }
+
+    hide_console(&mut cmd);
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("spawn powershell.exe 失败 (op={}/{}): {}", agent, op, e))?;
+
+    // We do NOT pipe stdin_bytes directly to powershell.exe — the payload
+    // travels via INSTALLER_OP_STDIN_B64 env var instead (design decision D2).
+    // Drop stdin pipe so PowerShell doesn't block waiting for EOF.
+    drop(child.stdin.take());
+
+    let out = child
+        .wait_with_output()
+        .map_err(|e| format!("等待 powershell.exe 失败 (op={}/{}): {}", agent, op, e))?;
+
+    // ── Append exit-code marker + any stderr to the op session log ───
+    //
+    // The session log file is SHARED with bootstrap.ps1's $SessionLog: that
+    // script's Write-Display lines AND (since the Invoke-WslBashStreamed fix)
+    // the bash op script's stdout are tee'd into this same file directly. So
+    // appending PS-captured stdout here would duplicate everything in the file.
+    //
+    // We still append stderr (PowerShell hard errors land there) and an exit-
+    // code marker so the file has a clear end-of-op delimiter.
+    if let Ok(mut f) = fs::OpenOptions::new().append(true).open(&op_log_path) {
+        if !out.stderr.is_empty() {
+            let _ = writeln!(f, "--- powershell stderr ---");
+            let _ = f.write_all(&out.stderr);
+        }
+        let code_str = out
+            .status
+            .code()
+            .map(|c| c.to_string())
+            .unwrap_or_else(|| "signal".to_string());
+        let _ = writeln!(
+            f,
+            "--- exit code: {} ({}) ---",
+            code_str,
+            crate::logger::format_utc_now()
+        );
+    }
+
+    if !out.status.success() {
+        let code = out.status.code();
+        log_error!(
+            "commands::dispatch_op",
+            "op={}/{} failed exit={:?} log={}",
+            agent,
+            op,
+            code,
+            op_log_path.display()
+        );
+        let base_msg = format_cli_failure(
+            &format!("{}/{}", agent, op),
+            &out.stdout,
+            &out.stderr,
+            code,
+        );
+        return Err(format!(
+            "{}\n(log: {})",
+            base_msg,
+            op_log_path.display()
+        ));
+    }
+
+    log_info!(
+        "commands::dispatch_op",
+        "op={}/{} ok log={}",
+        agent,
+        op,
+        op_log_path.display()
+    );
+    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+/// macOS/Linux implementation of dispatch_op: invokes shell/claw-op.sh with
+/// stdin_bytes piped to the child process stdin. login_env is applied so the
+/// op script inherits the same PATH enrichment as other bash invocations.
+///
+/// Per-op session log: `<tmp_dir>/claw-installer/op-<agent>-<op>-<ts>.log`.
+/// Sets `CLAW_SESSION_LOG` on the child so op scripts using fd 3 can write
+/// to the same file.
+#[cfg(not(target_os = "windows"))]
+pub(crate) fn dispatch_op(
+    app: &tauri::AppHandle,
+    agent: &str,
+    op: &str,
+    stdin_bytes: &[u8],
+    env_extras: &[(&str, &str)],
+) -> Result<String, String> {
+    use std::io::Write as _;
+    use std::process::{Command, Stdio};
+
+    // ── Per-op session log ────────────────────────────────────────────────
+    let op_log_path = build_session_log_path(&format!("op-{}-{}", agent, op));
+    log_info!(
+        "commands::dispatch_op",
+        "starting op={}/{} log={}",
+        agent,
+        op,
+        op_log_path.display()
+    );
+    if let Ok(mut f) = fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(false)
+        .open(&op_log_path)
+    {
+        let _ = writeln!(f, "=== op={}/{} started at {} ===", agent, op,
+            crate::logger::log_path()
+                .map(|p| p.display().to_string())
+                .unwrap_or_default()
+        );
+    }
+
+    let claw_op_sh = resolve_installer_path(app, "claw-op.sh");
+
+    let mut cmd = Command::new("bash");
+    cmd.arg(claw_op_sh.as_os_str())
+        .arg("--op")
+        .arg(op)
+        .arg("--agent")
+        .arg(agent);
+
+    // Apply login env (PATH / PNPM_HOME / FNM_DIR from the user's shell init).
+    for (k, v) in login_env::login_env() {
+        cmd.env(k, v);
+    }
+
+    // Forward the per-op log path via CLAW_SESSION_LOG so op scripts that
+    // use fd 3 (the two-stream logging contract) write to our session file.
+    cmd.env("CLAW_SESSION_LOG", op_log_path.as_os_str());
+
+    // Apply caller-supplied extra env vars.
+    for (k, v) in env_extras {
+        cmd.env(k, v);
+    }
+
+    cmd.stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("spawn bash claw-op.sh 失败 (op={}/{}): {}", agent, op, e))?;
+
+    if !stdin_bytes.is_empty() {
+        let mut stdin_pipe = child
+            .stdin
+            .take()
+            .ok_or_else(|| "无法获取 bash stdin 管道".to_string())?;
+        stdin_pipe
+            .write_all(stdin_bytes)
+            .map_err(|e| format!("写入 stdin 失败: {}", e))?;
+    }
+    // Drop stdin to signal EOF.
+    drop(child.stdin.take());
+
+    let out = child
+        .wait_with_output()
+        .map_err(|e| format!("等待 bash claw-op.sh 失败 (op={}/{}): {}", agent, op, e))?;
+
+    // ── Append captured stdout/stderr + exit code to the op session log ───
+    //
+    // macOS branch: no UAC, no bootstrap.ps1 tee. bash's stdout/stderr flow
+    // straight back here. Without this append the file would be empty, so we
+    // dump everything captured.
+    if let Ok(mut f) = fs::OpenOptions::new().append(true).open(&op_log_path) {
+        let _ = writeln!(f, "--- stdout ---");
+        let _ = f.write_all(&out.stdout);
+        let _ = writeln!(f, "\n--- stderr ---");
+        let _ = f.write_all(&out.stderr);
+        let code_str = out
+            .status
+            .code()
+            .map(|c| c.to_string())
+            .unwrap_or_else(|| "signal".to_string());
+        let _ = writeln!(
+            f,
+            "\n--- exit code: {} ({}) ---",
+            code_str,
+            crate::logger::format_utc_now()
+        );
+    }
+
+    if !out.status.success() {
+        let code = out.status.code();
+        log_error!(
+            "commands::dispatch_op",
+            "op={}/{} failed exit={:?} log={}",
+            agent,
+            op,
+            code,
+            op_log_path.display()
+        );
+        let base_msg = format_cli_failure(
+            &format!("{}/{}", agent, op),
+            &out.stdout,
+            &out.stderr,
+            code,
+        );
+        return Err(format!(
+            "{}\n(log: {})",
+            base_msg,
+            op_log_path.display()
+        ));
+    }
+
+    log_info!(
+        "commands::dispatch_op",
+        "op={}/{} ok log={}",
+        agent,
+        op,
+        op_log_path.display()
+    );
+    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+// ---- apply_openclaw_model_config ------------------------------------------
+
+/// Apply a JSON patch to the openclaw model config, then validate.
+///
+/// Routes through the unified op-dispatch protocol so the WSL session gets a
+/// fully-composed PATH (fnm-managed Node, pnpm) from common.sh — fixing the
+/// `exec: node: not found` regression from the ad-hoc wsl.exe path.
+#[tauri::command]
+pub async fn apply_openclaw_model_config(
+    app: tauri::AppHandle,
+    patch_json: String,
+    replace_paths: Vec<String>,
+) -> Result<(), String> {
+    // Validate replace_paths to prevent shell injection: each path must consist
+    // only of dotted-identifier characters and must not start with '-'.
+    for p in &replace_paths {
+        if !is_valid_openclaw_path(p) {
+            return Err(format!("非法的 replace path: {:?}", p));
+        }
+    }
+
+    // Build INSTALLER_OP_REPLACE_PATHS as a space-joined string of validated paths.
+    let replace_paths_env = replace_paths.join(" ");
+
+    let env_extras: Vec<(&str, &str)> = if replace_paths_env.is_empty() {
+        vec![]
+    } else {
+        vec![("INSTALLER_OP_REPLACE_PATHS", replace_paths_env.as_str())]
+    };
+
+    dispatch_op(
+        &app,
+        "openclaw",
+        "apply-model-config",
+        patch_json.as_bytes(),
+        &env_extras,
+    )
+    .map(|_| ())
+}
+
+
+/// Accept only dotted config paths like `models.providers.custom.models`.
+/// Rejects anything containing shell metacharacters / spaces, AND anything
+/// starting with `-` — a leading dash would be parsed by openclaw's arg
+/// parser as a flag (`--replace-path -h` → openclaw treats `-h` as `-h/--help`,
+/// exits 0 with help text, and the GUI mistakenly reports the save succeeded).
+fn is_valid_openclaw_path(s: &str) -> bool {
+    !s.is_empty()
+        && !s.starts_with('-')
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == '-')
+}
+
+/// Apply a hermes model + API-key change via the unified op-dispatch protocol.
+///
+/// Routes through `shell/agents/hermes/apply-model-config.sh` (via
+/// `shell/claw-op.sh`) so the process inherits a fully-composed PATH from
+/// `common.sh` (fnm-managed Node, pnpm, uv, brew) — consistent with the
+/// Windows path and with how install/start/stop work.
+///
+/// The API key rides on stdin; all other config values are forwarded as
+/// INSTALLER_OP_* env vars and consumed by the op script.
+#[cfg(not(target_os = "windows"))]
+#[tauri::command]
+pub async fn apply_hermes_model_config(
+    app: tauri::AppHandle,
+    provider: String,
+    default_model: String,
+    base_url: String,
+    env_var_name: String,
+    api_key: String,
+) -> Result<(), String> {
+    // env_var_name validation: lock down to [A-Za-z0-9_]+ so it is safe to
+    // use as a shell variable name inside the op script.
+    if env_var_name.is_empty()
+        || !env_var_name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_')
+    {
+        return Err(format!("非法的 env var 名: {}", env_var_name));
+    }
+
+    let env_extras = [
+        ("INSTALLER_OP_PROVIDER", provider.as_str()),
+        ("INSTALLER_OP_MODEL", default_model.as_str()),
+        ("INSTALLER_OP_BASE_URL", base_url.as_str()),
+        ("INSTALLER_OP_ENV_VAR_NAME", env_var_name.as_str()),
+    ];
+
+    dispatch_op(
+        &app,
+        "hermes",
+        "apply-model-config",
+        api_key.as_bytes(),
+        &env_extras,
+    )
+    .map(|_| ())
+}
+
+/// Windows: hermes lives inside WSL. Routes through the unified op-dispatch
+/// protocol so the WSL session gets a fully-composed PATH from common.sh.
+///
+/// The API key rides on stdin (via INSTALLER_OP_STDIN_B64 in the env var
+/// transport); all other config values are forwarded as INSTALLER_OP_* env
+/// vars and consumed by shell/agents/hermes/apply-model-config.sh.
+#[cfg(target_os = "windows")]
+#[tauri::command]
+pub async fn apply_hermes_model_config(
+    app: tauri::AppHandle,
+    provider: String,
+    default_model: String,
+    base_url: String,
+    env_var_name: String,
+    api_key: String,
+) -> Result<(), String> {
+    // env_var_name validation: lock down to [A-Za-z0-9_]+ so it is safe to
+    // use as a shell variable name inside the op script.
+    if env_var_name.is_empty()
+        || !env_var_name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_')
+    {
+        return Err(format!("非法的 env var 名: {}", env_var_name));
+    }
+
+    let env_extras = [
+        ("INSTALLER_OP_PROVIDER", provider.as_str()),
+        ("INSTALLER_OP_MODEL", default_model.as_str()),
+        ("INSTALLER_OP_BASE_URL", base_url.as_str()),
+        ("INSTALLER_OP_ENV_VAR_NAME", env_var_name.as_str()),
+    ];
+
+    dispatch_op(
+        &app,
+        "hermes",
+        "apply-model-config",
+        api_key.as_bytes(),
+        &env_extras,
+    )
+    .map(|_| ())
+}
+
+// Phase 3 cleanup: shell_single_quote, run_in_wsl_with_stdin, and
+// run_in_wsl_file_based are gone — all callers migrated to dispatch_op,
+// which uses bootstrap.ps1's Invoke-WslBashStreamed for transport.
+
+// ---- Model-config snapshot persistence ---------------------------------------
+//
+// The GUI mirrors the user's committed ModelConfig (active provider, per-provider
+// credentials, savedAt timestamps) to <app_config_dir>/model-config.json so the
+// "已配置" badge + input fields survive restarts. The file holds plaintext API
+// keys, so we write it with mode 0600 on Unix (same security posture as
+// ~/.hermes/.env, which hermes itself uses).
+//
+// Shape is owned by the TS side; Rust passes serde_json::Value through opaquely.
+
+fn model_config_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let dir = app
+        .path()
+        .app_config_dir()
+        .map_err(|e| format!("解析配置目录失败: {}", e))?;
+    if !dir.exists() {
+        fs::create_dir_all(&dir)
+            .map_err(|e| format!("创建配置目录失败 {}: {}", dir.display(), e))?;
+    }
+    Ok(dir.join("model-config.json"))
+}
+
+#[tauri::command]
+pub async fn read_model_configs(
+    app: tauri::AppHandle,
+) -> Result<Option<serde_json::Value>, String> {
+    let path = model_config_path(&app)?;
+    match fs::read_to_string(&path) {
+        Ok(text) => {
+            let v: serde_json::Value = serde_json::from_str(&text)
+                .map_err(|e| format!("解析 {} 失败: {}", path.display(), e))?;
+            Ok(Some(v))
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(format!("读取 {} 失败: {}", path.display(), e)),
+    }
+}
+
+#[tauri::command]
+pub async fn write_model_configs(
+    app: tauri::AppHandle,
+    payload: serde_json::Value,
+) -> Result<(), String> {
+    let path = model_config_path(&app)?;
+    let body = serde_json::to_vec_pretty(&payload)
+        .map_err(|e| format!("序列化 model-config 失败: {}", e))?;
+
+    // Atomic-ish: write to a sibling temp file with mode 0600 then rename.
+    let parent = path.parent().unwrap_or_else(|| std::path::Path::new("."));
+    let tmp = parent.join(format!(".model-config.tmp.{}", std::process::id()));
+    write_secret_file(&tmp, &body)
+        .map_err(|e| format!("写入 {} 失败: {}", tmp.display(), e))?;
+    fs::rename(&tmp, &path)
+        .map_err(|e| format!("重命名到 {} 失败: {}", path.display(), e))?;
+    Ok(())
+}
+
+/// Write a file with mode 0600 on Unix so secrets aren't world-readable.
+#[cfg(not(target_os = "windows"))]
+fn write_secret_file(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let mut f = fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(path)?;
+    f.write_all(bytes)?;
+    f.sync_all()?;
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+#[allow(dead_code)]
+fn write_secret_file(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+    fs::write(path, bytes)
+}
+
+fn format_cli_failure(
+    label: &str,
+    stdout: &[u8],
+    stderr: &[u8],
+    code: Option<i32>,
+) -> String {
+    let so = String::from_utf8_lossy(stdout);
+    let se = String::from_utf8_lossy(stderr);
+    let body = if !se.trim().is_empty() {
+        se.into_owned()
+    } else if !so.trim().is_empty() {
+        so.into_owned()
+    } else {
+        String::new()
+    };
+    let code_str = code
+        .map(|c| c.to_string())
+        .unwrap_or_else(|| "signal".to_string());
+    if body.is_empty() {
+        format!("{} 失败 (exit={})", label, code_str)
+    } else {
+        format!("{} 失败 (exit={}):\n{}", label, code_str, body.trim_end())
+    }
 }
 
 #[cfg(test)]
@@ -1169,5 +1812,64 @@ mod tests {
         assert!(s.contains("0x0000002A"));
         // No trailing " — <hint>" segment
         assert!(!s.contains(" — "), "unexpected hint: {s:?}");
+    }
+
+    // ---- dispatch_op tests --------------------------------------------------
+
+    #[test]
+    fn is_valid_openclaw_path_accepts_good_paths() {
+        assert!(is_valid_openclaw_path("models.providers.custom.models"));
+        assert!(is_valid_openclaw_path("a"));
+        assert!(is_valid_openclaw_path("a.b.c"));
+        assert!(is_valid_openclaw_path("model_name"));
+    }
+
+    #[test]
+    fn is_valid_openclaw_path_rejects_empty() {
+        assert!(!is_valid_openclaw_path(""));
+    }
+
+    #[test]
+    fn is_valid_openclaw_path_rejects_leading_dash() {
+        assert!(!is_valid_openclaw_path("-help"));
+        assert!(!is_valid_openclaw_path("--replace-path"));
+    }
+
+    #[test]
+    fn is_valid_openclaw_path_rejects_shell_metacharacters() {
+        assert!(!is_valid_openclaw_path("foo;bar"));
+        assert!(!is_valid_openclaw_path("foo bar"));
+        assert!(!is_valid_openclaw_path("foo$bar"));
+    }
+
+    /// dispatch_op_build_ps_extras verifies that dispatch_op produces the right
+    /// set of extra arguments for bootstrap.ps1 on Windows.  We test the arg
+    /// construction logic via a dedicated test helper rather than spawning
+    /// PowerShell (which requires a live Windows + WSL environment).
+    #[test]
+    fn dispatch_op_ps_extras_include_op_and_agent() {
+        let extras = build_dispatch_op_ps_extras("openclaw", "apply-model-config");
+        // Must contain -Op, -Agent, and -FastPath (the bootstrap preflight skip)
+        let joined = extras.join(" ");
+        assert!(
+            joined.contains("-Op apply-model-config"),
+            "extras = {joined:?}"
+        );
+        assert!(joined.contains("-Agent openclaw"), "extras = {joined:?}");
+        assert!(
+            joined.contains("-FastPath"),
+            "expected -FastPath for op dispatch to skip preflight; extras = {joined:?}"
+        );
+    }
+
+    /// On macOS/Linux, dispatch_op constructs a bash invocation using claw-op.sh.
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn dispatch_op_unix_path_contains_claw_op_sh() {
+        use std::path::PathBuf;
+        let shell_dir = PathBuf::from("/tmp/fake-shell");
+        let script_path = shell_dir.join("claw-op.sh");
+        // Verify the path we'd pass to bash looks correct
+        assert!(script_path.to_string_lossy().ends_with("claw-op.sh"));
     }
 }

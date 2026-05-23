@@ -1,0 +1,12 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "model-fetch",
+  "description": "HTTPS access to model-provider /models endpoints so the GUI can populate the model-name dropdown. Scoped to https://** because custom-provider URLs are user-supplied at runtime.",
+  "windows": ["main"],
+  "permissions": [
+    {
+      "identifier": "http:default",
+      "allow": [{ "url": "https://**" }]
+    }
+  ]
+}

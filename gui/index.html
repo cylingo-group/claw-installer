@@ -20,10 +20,15 @@
     main.tsx removes the #boot-splash node right after React mounts.
   -->
   <style>
-    html, body { margin: 0; padding: 0; height: 100%; background: #FFFFFF; }
+    /* Window is transparent at the OS layer (tauri.conf.json → transparent:true)
+       so the OS can clip our rounded corners and draw a soft shadow around the
+       rounded shape. The real surface is painted on #root (and the boot splash)
+       below, each with matching border-radius. */
+    html, body { margin: 0; padding: 0; height: 100%; background: transparent; }
     #boot-splash {
       position: fixed; inset: 0; display: flex; flex-direction: column;
       background: #FFFFFF; z-index: 9999;
+      border-radius: 10px; overflow: hidden;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
                     "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
       color: #333;

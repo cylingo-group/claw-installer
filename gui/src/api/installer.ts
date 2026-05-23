@@ -7,7 +7,21 @@
  * in browser/stub mode.
  */
 import { invoke, Channel } from "@tauri-apps/api/core";
-import type { InstallerEvent } from "@/store/installer-store";
+import type {
+  AgentId,
+  InstallerEvent,
+  ModelConfig,
+} from "@/store/installer-store";
+
+/**
+ * Persisted shape mirrored to <app_config_dir>/model-config.json so the GUI's
+ * "已配置" badge + input fields survive across restarts. Owned by the TS side;
+ * Rust treats the payload as opaque JSON.
+ */
+export interface ModelConfigSnapshot {
+  version: 1;
+  agents: Partial<Record<AgentId, ModelConfig>>;
+}
 
 export interface InstallerStatePayload {
   openclaw: "installed" | "not-installed";
@@ -59,6 +73,53 @@ export async function revealInFolder(path: string): Promise<void> {
   await revealItemInDir(path);
 }
 
+/** Open a URL in the user's default browser. */
+export async function openExternalUrl(url: string): Promise<void> {
+  const { openUrl } = await import("@tauri-apps/plugin-opener");
+  await openUrl(url);
+}
+
+/**
+ * Write an OpenClaw config patch via `openclaw config patch --file` followed
+ * by `openclaw config validate`. `replacePaths` opts into replacing the
+ * specific protected paths (e.g. a provider's `models` array when creating
+ * a custom provider). Throws with the CLI's stderr on failure.
+ */
+export async function applyOpenclawModelConfig(
+  patchJson: string,
+  replacePaths: string[],
+): Promise<void> {
+  return invoke("apply_openclaw_model_config", { patchJson, replacePaths });
+}
+
+/**
+ * Apply a Hermes model selection via `hermes config set` and update
+ * `~/.hermes/.env` with the API key. Throws with CLI / file-IO errors.
+ */
+export async function applyHermesModelConfig(params: {
+  provider: string;
+  defaultModel: string;
+  baseUrl: string;
+  envVarName: string;
+  apiKey: string;
+}): Promise<void> {
+  return invoke("apply_hermes_model_config", params);
+}
+
+/** Read the GUI's persisted ModelConfig snapshot, or null if the file
+ *  doesn't exist yet (first launch). */
+export async function readModelConfigs(): Promise<ModelConfigSnapshot | null> {
+  return invoke<ModelConfigSnapshot | null>("read_model_configs");
+}
+
+/** Persist the GUI's current ModelConfig per agent. Called after every
+ *  successful Save in SettingsPanel. */
+export async function writeModelConfigs(
+  payload: ModelConfigSnapshot,
+): Promise<void> {
+  return invoke("write_model_configs", { payload });
+}
+
 export async function runUninstaller(
   agent: string,
   onEvent: (e: InstallerEvent) => void
@@ -82,6 +143,14 @@ export async function runServiceAction(
 /** Trigger an immediate system reboot (Windows only). Returns Err on non-Windows. */
 export async function systemReboot(): Promise<void> {
   return invoke("system_reboot");
+}
+
+/**
+ * Resolve and open the dashboard URL for `agentId` in the system browser.
+ * URL is derived in Rust via the agent's CLI (or its config file as fallback).
+ */
+export async function openAgentDashboard(agentId: string): Promise<void> {
+  return invoke("open_agent_dashboard", { agentId });
 }
 
 /**

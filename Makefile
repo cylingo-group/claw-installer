@@ -39,7 +39,9 @@ build-windows: install ## Cross-compile Windows .exe and zip with shell/ for dis
 	@rm -rf "$(WIN_STAGE_DIR)" "$(WIN_ZIP)"
 	@mkdir -p "$(WIN_STAGE_DIR)"
 	@cp "$(WIN_TARGET_DIR)/claw-gui.exe" "$(WIN_STAGE_DIR)/claw-installer.exe"
-	@cp -R "$(WIN_TARGET_DIR)/shell" "$(WIN_STAGE_DIR)/shell"
+	@# `--no-bundle` skips Tauri's resource copy into target/release/, so we
+	@# stage shell/ directly from the repo's source-of-truth instead.
+	@cp -R "$(REPO_ROOT)/shell" "$(WIN_STAGE_DIR)/shell"
 	@# Sanity: customer's bootstrap.ps1 must have UTF-8 BOM (PS 5.1 needs it
 	@# to decode the Chinese strings in the script).
 	@head -c 3 "$(WIN_STAGE_DIR)/shell/windows/bootstrap.ps1" | xxd -p | grep -q '^efbbbf' \

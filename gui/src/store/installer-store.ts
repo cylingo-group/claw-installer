@@ -24,45 +24,155 @@ export type HostStatus =
 
 // ---- Agent config types -------------------------------------------------------
 
-export type ModelProvider = "deepseek" | "kimi" | "minimax" | "xinyuan";
+export type ModelProvider =
+  | "xinyuan"
+  | "deepseek"
+  | "kimi"
+  | "kimi-coding"
+  | "minimax"
+  | "custom";
 
-/** Providers that accept user-supplied API key + model name. 心元 has no inputs yet. */
+/** Built-in providers that accept user-supplied API key + model name. */
+export type KnownProvider = Exclude<ModelProvider, "xinyuan" | "custom">;
+
+/** Providers that have user-editable credentials (excludes the coming-soon 心元). */
 export type CredentialedProvider = Exclude<ModelProvider, "xinyuan">;
 
 export type ChannelId = "wechat" | "feishu" | "dingtalk" | "bubbolink";
 
+export type ApiStyle = "openai" | "anthropic";
+
 export interface ProviderCredentials {
   apiKey: string;
   modelName: string;
+  /** Epoch ms at which these credentials were last successfully written to
+   *  the agent's CLI config. Cleared whenever the user edits a field — the
+   *  "已配置" badge tracks this, not the locally-filled state. */
+  savedAt: number | null;
+}
+
+export interface CustomCredentials extends ProviderCredentials {
+  apiStyle: ApiStyle;
+  name: string;
+  baseUrl: string;
+  /** Free-form `Key: Value` lines; optional. */
+  headers: string;
 }
 
 /**
- * Per-provider credential storage. Each provider's apiKey / modelName is
- * persisted independently so switching the expanded card does not clobber
- * what the user typed under a different provider.
+ * Per-provider credential storage plus the user's currently active selection.
+ * Each known provider keeps its own apiKey/modelName so switching the active
+ * one does not clobber what the user typed elsewhere. 心元 has no input fields
+ * yet (it's a marketing placeholder for the new-user promo).
  */
-export type ModelConfig = Record<CredentialedProvider, ProviderCredentials>;
+export interface ModelConfig {
+  active: ModelProvider;
+  deepseek: ProviderCredentials;
+  kimi: ProviderCredentials;
+  "kimi-coding": ProviderCredentials;
+  minimax: ProviderCredentials;
+  custom: CustomCredentials;
+}
 
 export interface AgentConfig {
   model: ModelConfig;
   channel: ChannelId | null;
 }
 
-export function emptyModelConfig(): ModelConfig {
+/**
+ * Merge a possibly-stale persisted ModelConfig snapshot on top of the empty
+ * defaults. Fields not present in the snapshot fall back to defaults — this
+ * is what lets us evolve the schema (adding kimi-coding, for example) without
+ * crashing on snapshots written by older versions.
+ */
+export function hydrateModelConfig(
+  persisted: Partial<ModelConfig> | undefined | null,
+): ModelConfig {
+  const base = emptyModelConfig();
+  if (!persisted) return base;
+  const validActive: ModelProvider[] = [
+    "xinyuan",
+    "deepseek",
+    "kimi",
+    "kimi-coding",
+    "minimax",
+    "custom",
+  ];
   return {
-    deepseek: { apiKey: "", modelName: "" },
-    kimi: { apiKey: "", modelName: "" },
-    minimax: { apiKey: "", modelName: "" },
+    active: validActive.includes(persisted.active as ModelProvider)
+      ? (persisted.active as ModelProvider)
+      : base.active,
+    deepseek: { ...base.deepseek, ...(persisted.deepseek ?? {}) },
+    kimi: { ...base.kimi, ...(persisted.kimi ?? {}) },
+    "kimi-coding": {
+      ...base["kimi-coding"],
+      ...(persisted["kimi-coding"] ?? {}),
+    },
+    minimax: { ...base.minimax, ...(persisted.minimax ?? {}) },
+    custom: { ...base.custom, ...(persisted.custom ?? {}) },
   };
 }
 
-/** A provider entry is "complete" when both apiKey and modelName are non-blank. */
-export function isProviderConfigured(c: ProviderCredentials): boolean {
+export function emptyModelConfig(): ModelConfig {
+  return {
+    active: "xinyuan",
+    deepseek: { apiKey: "", modelName: "", savedAt: null },
+    kimi: { apiKey: "", modelName: "", savedAt: null },
+    "kimi-coding": { apiKey: "", modelName: "kimi-for-coding", savedAt: null },
+    minimax: { apiKey: "", modelName: "", savedAt: null },
+    custom: {
+      apiStyle: "openai",
+      name: "",
+      baseUrl: "",
+      apiKey: "",
+      modelName: "",
+      headers: "",
+      savedAt: null,
+    },
+  };
+}
+
+/** All required fields for a known provider are filled in the form. */
+export function isProviderFilled(c: ProviderCredentials): boolean {
   return c.apiKey.trim() !== "" && c.modelName.trim() !== "";
 }
 
+/** All required fields for the custom provider are filled in the form. */
+export function isCustomFilled(c: CustomCredentials): boolean {
+  return (
+    c.name.trim() !== "" &&
+    c.baseUrl.trim() !== "" &&
+    c.apiKey.trim() !== "" &&
+    c.modelName.trim() !== ""
+  );
+}
+
+/**
+ * "已配置" = both filled AND committed (savedAt non-null and not invalidated
+ * by a subsequent edit). Used to drive the "已配置" badge and the agent-card
+ * configuration warning.
+ */
+export function isProviderConfigured(c: ProviderCredentials): boolean {
+  return c.savedAt !== null && isProviderFilled(c);
+}
+
+export function isCustomConfigured(c: CustomCredentials): boolean {
+  return c.savedAt !== null && isCustomFilled(c);
+}
+
+/**
+ * The agent's *active* provider must be both filled AND committed.
+ * 心元 has no setup flow yet so it never counts as configured.
+ */
 export function isModelConfigured(model: ModelConfig): boolean {
-  return (Object.values(model) as ProviderCredentials[]).some(isProviderConfigured);
+  switch (model.active) {
+    case "xinyuan":
+      return false;
+    case "custom":
+      return isCustomConfigured(model.custom);
+    default:
+      return isProviderConfigured(model[model.active]);
+  }
 }
 
 export interface AgentState {
@@ -186,6 +296,8 @@ interface State {
   serviceActionAgent: AgentId | null;
   /** Which action is in flight when serviceActionAgent is set. */
   serviceActionKind: "start" | "stop" | null;
+  /** Agent whose Dashboard launch is in flight (null if none). */
+  dashboardActionAgent: AgentId | null;
   installStartedAt: number | null;
   installEndedAt: number | null;
   hostStatus: HostStatus;
@@ -211,6 +323,7 @@ interface State {
   closeUninstall: () => void;
   confirmUninstall: () => void;
   openSettings: (id: AgentId) => void;
+  openDashboard: (id: AgentId) => void;
   closeSettings: () => void;
   openAppSettings: () => void;
   closeAppSettings: () => void;
@@ -341,6 +454,7 @@ export const useInstaller = create<State>((set, get) => ({
   uninstallTarget: null,
   serviceActionAgent: null,
   serviceActionKind: null,
+  dashboardActionAgent: null,
   installStartedAt: null,
   installEndedAt: null,
   // Start as "detecting" so the host-status banner shows a neutral
@@ -534,6 +648,22 @@ export const useInstaller = create<State>((set, get) => ({
   },
 
   openSettings: (id) => set({ settingsTarget: id }),
+
+  openDashboard: (id) => {
+    if (!IS_TAURI_ENV) return;
+    // Bail if another dashboard launch is already in flight (the busy IconBtn
+    // is disabled, but guard the action anyway in case it's called directly).
+    if (get().dashboardActionAgent) return;
+    set({ dashboardActionAgent: id });
+    void import("@/api/installer")
+      .then(({ openAgentDashboard }) => openAgentDashboard(id))
+      .catch((e) => {
+        get().appendLog(`[dashboard] 打开 ${id} dashboard 失败：${String(e)}`);
+      })
+      .finally(() => {
+        set({ dashboardActionAgent: null });
+      });
+  },
   closeSettings: () => set({ settingsTarget: null }),
   openAppSettings: () => set({ appSettingsOpen: true }),
   closeAppSettings: () => set({ appSettingsOpen: false }),
@@ -685,11 +815,19 @@ export const useInstaller = create<State>((set, get) => ({
     set({ isBootstrapping: true });
     try {
       if (IS_TAURI_ENV) {
-        const { readInstallerState, readHostStatus } = await import("@/api/installer");
-        const [statePayload, hostPayload] = await Promise.all([
+        const { readInstallerState, readHostStatus, readModelConfigs } =
+          await import("@/api/installer");
+        const [statePayload, hostPayload, snapshot] = await Promise.all([
           readInstallerState(),
           readHostStatus(),
+          // Don't let a corrupt snapshot break bootstrap — degrade to empty
+          // defaults if read/parse fails.
+          readModelConfigs().catch((err) => {
+            console.warn("[bootstrap] readModelConfigs failed:", err);
+            return null;
+          }),
         ]);
+        const persistedAgents = snapshot?.agents ?? {};
         set((s) => ({
           agents: {
             ...s.agents,
@@ -697,11 +835,19 @@ export const useInstaller = create<State>((set, get) => ({
               ...s.agents.openclaw,
               status:
                 statePayload.openclaw === "installed" ? "ready" : "not-installed",
+              config: {
+                ...s.agents.openclaw.config,
+                model: hydrateModelConfig(persistedAgents.openclaw),
+              },
             },
             hermes: {
               ...s.agents.hermes,
               status:
                 statePayload.hermes === "installed" ? "ready" : "not-installed",
+              config: {
+                ...s.agents.hermes.config,
+                model: hydrateModelConfig(persistedAgents.hermes),
+              },
             },
           },
           hostStatus: hostPayload.status as HostStatus,

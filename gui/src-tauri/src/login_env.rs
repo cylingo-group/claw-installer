@@ -44,7 +44,7 @@ pub fn login_env() -> &'static HashMap<String, String> {
         let handle = HARVEST_HANDLE.lock().ok().and_then(|mut g| g.take());
         match handle {
             Some(h) => h.join().unwrap_or_else(|_| {
-                eprintln!("[claw-installer] login_env: harvest thread panicked");
+                crate::log_error!("login_env", "harvest thread panicked");
                 HashMap::new()
             }),
             None => harvest(),
@@ -82,22 +82,24 @@ fn harvest() -> HashMap<String, String> {
         tried.push(shell.clone());
         let map = harvest_one(&shell, SHELL_TIMEOUT);
         if !map.is_empty() && map.contains_key("PATH") {
-            eprintln!(
-                "[claw-installer] login_env: ok via {} ({} vars, PATH={})",
+            crate::log_info!(
+                "login_env",
+                "ok via {} ({} vars, PATH={})",
                 shell,
                 map.len(),
                 preview_path(map.get("PATH").map(|s| s.as_str()).unwrap_or(""))
             );
             return map;
         }
-        eprintln!(
-            "[claw-installer] login_env: {} produced no usable env — trying next",
+        crate::log_warn!(
+            "login_env",
+            "{} produced no usable env — trying next",
             shell
         );
     }
-    eprintln!(
-        "[claw-installer] login_env: all candidate shells failed (tried {:?}) — \
-         bash spawns will see launchd's minimal env",
+    crate::log_warn!(
+        "login_env",
+        "all candidate shells failed (tried {:?}) — bash spawns will see launchd's minimal env",
         tried
     );
     HashMap::new()
@@ -160,8 +162,9 @@ fn harvest_one(shell: &str, timeout: Duration) -> HashMap<String, String> {
             parse_env_output(&String::from_utf8_lossy(&output.stdout))
         }
         Ok(Ok(output)) => {
-            eprintln!(
-                "[claw-installer] login_env: {} exited code={:?} stderr={}",
+            crate::log_warn!(
+                "login_env",
+                "{} exited code={:?} stderr={}",
                 shell,
                 output.status.code(),
                 String::from_utf8_lossy(&output.stderr).trim()
@@ -169,14 +172,11 @@ fn harvest_one(shell: &str, timeout: Duration) -> HashMap<String, String> {
             HashMap::new()
         }
         Ok(Err(e)) => {
-            eprintln!("[claw-installer] login_env: spawn {} failed: {}", shell, e);
+            crate::log_warn!("login_env", "spawn {} failed: {}", shell, e);
             HashMap::new()
         }
         Err(_) => {
-            eprintln!(
-                "[claw-installer] login_env: {} timed out after {:?}",
-                shell, timeout
-            );
+            crate::log_warn!("login_env", "{} timed out after {:?}", shell, timeout);
             HashMap::new()
         }
     }

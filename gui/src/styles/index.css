@@ -27,15 +27,49 @@
 @layer base {
   *, ::before, ::after { box-sizing: border-box; border-color: var(--ued-border); }
   html, body { margin: 0; }
+  /* Transparent at the document level so the OS sees the window as transparent
+     outside the rounded #root mask — this is what lets macOS clip the corners
+     and draw its native window shadow around the rounded shape. */
+  html, body {
+    background: transparent !important;
+    height: 100%;
+  }
   body {
-    background-color: var(--ued-background);
     color: var(--ued-ink);
     font-family: var(--ued-font-body);
     line-height: var(--ued-line-height);
     -webkit-font-smoothing: antialiased;
   }
+  /* The actual window surface: rounded mask + opaque background. Sized to fill
+     the viewport, so the rounded corners hug the window edge exactly.
+     overflow:hidden clips child paints (incl. the boot splash). */
+  #root {
+    height: 100vh;
+    width: 100vw;
+    background-color: var(--ued-background);
+    border-radius: 10px;
+    overflow: hidden;
+    isolation: isolate;
+  }
   h1, h2, h3, h4 { font-family: var(--ued-font-heading); letter-spacing: -0.01em; }
   code, pre { font-family: var(--ued-font-mono); }
+
+  /* Tauri 2 frameless drag — JS handler is attached by Tauri on elements with
+     data-tauri-drag-region. The matching CSS rules below give the WKWebView /
+     WebView2 a native hint so dragging works even before Tauri's JS attaches.
+     Interactive children opt out via no-drag. */
+  [data-tauri-drag-region] {
+    -webkit-app-region: drag;
+    app-region: drag;
+    cursor: default;
+  }
+  [data-tauri-drag-region] button,
+  [data-tauri-drag-region] a,
+  [data-tauri-no-drag],
+  [data-tauri-no-drag] * {
+    -webkit-app-region: no-drag;
+    app-region: no-drag;
+  }
 }
 
 @keyframes ued-indeterminate {

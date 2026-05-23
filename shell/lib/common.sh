@@ -122,11 +122,14 @@ _claw_pnpm_home() {
 }
 
 # _claw_fnm_active_bin
-#   Return the bin dir of fnm's currently-defaulted Node version, by reading
-#   the $FNM_DIR/aliases/default symlink directly — works in non-interactive
-#   shells that never eval'd `fnm env`. Empty output if no default is set.
+#   Return the bin dir of fnm's currently-defaulted Node version. The
+#   `aliases/default` symlink IS the installation dir, so we just append /bin
+#   to it — works whether the symlink target is relative (older fnm) or
+#   absolute (fnm ≥1.38 stores it as an absolute path ending in /installation,
+#   which earlier readlink-then-${var##*/} parsing got wrong, see probe-v3 F1).
+#   Empty output if no default is set.
 _claw_fnm_active_bin() {
-  local d ver bin candidates=(
+  local d candidates=(
     "$HOME/.local/share/fnm"
     "$HOME/.fnm"
     "$HOME/Library/Application Support/fnm"
@@ -134,12 +137,8 @@ _claw_fnm_active_bin() {
   )
   for d in "${candidates[@]}"; do
     [[ -z "$d" || "$d" == "/fnm" ]] && continue
-    [[ -L "$d/aliases/default" ]] || continue
-    ver="$(readlink "$d/aliases/default" 2>/dev/null)"
-    ver="${ver##*/}"
-    bin="$d/node-versions/$ver/installation/bin"
-    if [[ -d "$bin" ]]; then
-      printf '%s' "$bin"
+    if [[ -d "$d/aliases/default/bin" ]]; then
+      printf '%s' "$d/aliases/default/bin"
       return 0
     fi
   done
@@ -167,10 +166,20 @@ _claw_compose_path() {
     _claw_path_prepend "$PNPM_HOME"
     _claw_path_prepend "$PNPM_HOME/bin"
   fi
-  # fnm: binary dir, then the active version's bin dir (highest precedence)
+  # fnm: binary dir, then the active version's bin dir (highest precedence).
+  # Two-layer defense (probe-v3 F2/F3 verified both):
+  #   Layer 1 — `eval $(fnm env)` is the canonical mechanism fnm itself
+  #             promotes; matches what step_shell_rc writes to .bashrc.
+  #             Works regardless of internal fnm layout changes.
+  #   Layer 2 — _claw_fnm_active_bin appends /bin to aliases/default symlink.
+  #             Fallback for when fnm binary is missing/broken but the install
+  #             dir is intact.
   local _fnm_dir _fnm_bin
   _fnm_dir="$(resolve_fnm_dir 2>/dev/null || true)"
   _claw_path_prepend "$_fnm_dir"
+  if command -v fnm >/dev/null 2>&1; then
+    eval "$(fnm env --shell bash 2>/dev/null)" 2>/dev/null || true
+  fi
   _fnm_bin="$(_claw_fnm_active_bin 2>/dev/null || true)"
   _claw_path_prepend "$_fnm_bin"
   export PATH

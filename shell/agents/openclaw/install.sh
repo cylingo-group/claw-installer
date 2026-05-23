@@ -218,12 +218,42 @@ _print_openclaw_summary() {
   log "⚠  ~/.npmrc 已写入镜像配置（sentinel 块），如需还原请手动删除该块。"
 }
 
+# Drain any pending device-pairing requests that the gateway has queued so
+# far — typically the CLI's own scope-upgrade triggered by our `openclaw
+# doctor` / `gateway status` calls during install. Approving these now means
+# the user's first `open dashboard` after install only has to drain the
+# browser's own new-pairing request (and subsequent opens have zero
+# pending requests since device-id is deterministic per machine+browser).
+#
+# Best-effort: if there's no queue at all (clean install + nothing
+# triggered yet), we exit clean within ~4s via INSTALLER_APPROVE_NEVER_FOUND_OK=1.
+# If the drain fails for any reason, install continues — the dashboard
+# flow will retry approval when the browser opens.
+warmup_openclaw_pairing() {
+  if [[ "$SERVICE_MODE" != "daemon" ]]; then
+    log "warmup_openclaw_pairing: SERVICE_MODE=$SERVICE_MODE — skipping (gateway not running as daemon)"
+    return 0
+  fi
+  display "@@step:openclaw-warmup:正在预批 openclaw CLI 凭证…"
+  # Run with a tight budget; if nothing's pending, exit clean (not fail).
+  if INSTALLER_APPROVE_MAX_ITERATIONS=10 \
+     INSTALLER_APPROVE_NEVER_FOUND_OK=1 \
+     bash "$__OC_DIR/approve-latest-device.sh" 2>&1 \
+       | sed -u 's/^/  /'; then
+    display "✓ OpenClaw 配对预热完成"
+  else
+    log "warmup_openclaw_pairing: drain returned non-zero — continuing (dashboard flow will retry)"
+    display "⚠ 配对预热未完成（可继续；首次打开 dashboard 时会重试）"
+  fi
+}
+
 # Public entry: install the openclaw agent. Assumes env deps are ready unless
 # explicitly told to ensure them via the env-step block in main().
 install_openclaw_agent() {
   install_openclaw_package
   write_openclaw_config
   start_openclaw_service
+  warmup_openclaw_pairing
 }
 
 main() {

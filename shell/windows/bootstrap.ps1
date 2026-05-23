@@ -41,6 +41,7 @@ param(
   [string]$RepoDir   = '',
   [string]$Agent     = '',    # 'openclaw' | 'hermes' | '' (all)
   [string]$Service   = '',    # 'start' | 'stop' | 'restart' | ''
+  [string]$Op        = '',    # op-dispatch verb (see $script:OpAgentTable)
   # Path to the shared session log file. The non-elevated parent and the UAC-
   # elevated child must write to the SAME file so the parent's tail-loop can
   # forward the child's Write-Display lines back to Tauri. process-scoped env
@@ -51,7 +52,13 @@ param(
   [switch]$Preflight,      # Run only preflight checks (1-3) and exit 0 if all pass
   [switch]$Uninstall,      # Run uninstall.sh instead of install.sh
   [switch]$InstallWslOnly, # Only install WSL features + target distro, then exit
-  [switch]$DebugMode       # Tail the session log to stderr in real time
+  [switch]$DebugMode,      # Tail the session log to stderr in real time
+  # Fast-path: skip ALL preflight (Windows build check, WSL functional check,
+  # UAC elevation, ensure-systemd, copy-installer-to-WSL etc.) for -Op /
+  # -Service invocations. The caller asserts that install completed successfully
+  # so all those checks are redundant — we save ~10s of per-op overhead.
+  # Only valid combined with -Op or -Service; ignored otherwise.
+  [switch]$FastPath
 )
 
 $ErrorActionPreference = 'Stop'
@@ -483,15 +490,79 @@ function Invoke-WslBashStreamed {
   param(
     [Parameter(Mandatory)] [string]$Name,
     [Parameter(Mandatory)] [string]$Script,
-    [switch]$Login
+    [switch]$Login,
+    # Optional base64-encoded stdin payload for op-dispatch. When non-empty,
+    # a decode-to-temp-file preamble is prepended to $Script so that the
+    # variable $_op_stdin_tmp is available inside the script body; the caller
+    # (Invoke-OpDispatch) redirects stdin from that temp file. When empty no
+    # preamble is prepended and the caller should redirect from /dev/null.
+    # Existing callers pass no -StdinB64, so default '' is backward-compatible.
+    [string]$StdinB64 = ''
   )
-  $lf = $Script -replace "`r`n", "`n"
-  $bytes = [System.Text.Encoding]::UTF8.GetBytes($lf)
+
+  # When stdin payload is present, prepend the decode-to-temp-file block.
+  # The block uses printf '%s' (not echo) so the base64 output is never
+  # terminated with an extra newline — safe for binary payloads.
+  # PS 5.1 note: no ??, no ternary; use explicit if/else throughout.
+  if ($StdinB64 -ne '') {
+    $preamble = @"
+_op_stdin_tmp="/tmp/installer-op-stdin-`$`$-`$(date +%s%N 2>/dev/null || date +%s)"
+trap 'rm -f "`$_op_stdin_tmp"' EXIT
+printf '%s' __STDINB64__ | base64 -d > "`$_op_stdin_tmp"
+chmod 600 "`$_op_stdin_tmp"
+"@
+    $preamble = $preamble -replace '__STDINB64__', $StdinB64
+    $fullScript = ($preamble + "`n" + $Script) -replace "`r`n", "`n"
+  } else {
+    $fullScript = $Script -replace "`r`n", "`n"
+  }
+
+  $bytes = [System.Text.Encoding]::UTF8.GetBytes($fullScript)
   $b64 = [Convert]::ToBase64String($bytes)
   $shell = if ($Login) { 'bash -l' } else { 'bash' }
   $remote = "echo $b64 | base64 -d | $shell"
   $env:WSL_UTF8 = '1'
-  & wsl.exe -d $Name -- bash -c $remote
+
+  # Tee bash output to BOTH $SessionLog (so it survives the UAC boundary —
+  # see Forward-SessionLogTail) AND Write-Host (so Tauri's captured stdout
+  # gets the bash output directly when there's no UAC re-spawn, i.e. when
+  # the GUI is already running elevated and Assert-Elevated is a no-op).
+  #
+  # Why Write-Host instead of the pipeline output stream: callers do
+  # `$rc = Invoke-WslBashStreamed …; exit $rc` and emit-to-pipeline would
+  # leak the bash lines into $rc. Write-Host goes to the Information /
+  # console stream which Tauri's spawn captures alongside stdout but which
+  # PowerShell does NOT pipe into $rc. Best of both worlds.
+  #
+  # In the Assert-Elevated path the elevated child's Write-Host goes to a
+  # hidden console (dropped on the floor), but Append-Utf8 still writes to
+  # the shared $SessionLog and the non-elevated parent's Forward-SessionLogTail
+  # forwards those bytes to Tauri. So both UAC and non-UAC cases work.
+  # CRITICAL: scope ErrorActionPreference to 'Continue' for this pipeline.
+  # The script-level setting is 'Stop' (line 58) — under it, `2>&1` converts
+  # native stderr to PS ErrorRecord and the FIRST one terminates the
+  # pipeline, killing wsl.exe before bash can finish. We saw this fail
+  # approve-latest-device on iter=1 when openclaw printed "OpenClaw does
+  # not recognize option --yes" to stderr: PS treated that as fatal and
+  # tore down the entire op. Any WSL-side process that writes to stderr
+  # would have the same effect — so this fix is general, not specific to
+  # approve. We restore the prior preference in `finally`.
+  $prevEAP = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  try {
+    & wsl.exe -d $Name -- bash -c $remote 2>&1 | ForEach-Object {
+      $line = $_.ToString()
+      # Write to the process's actual stdout file descriptor (same channel
+      # Forward-SessionLogTail uses) — bypasses PowerShell pipeline so it
+      # does not leak into Invoke-WslBashStreamed's return value, AND
+      # guarantees Tauri's captured stdout receives it.
+      [Console]::Out.WriteLine($line)
+      Append-Utf8 $SessionLog ("{0}`r`n" -f $line)
+    }
+    [Console]::Out.Flush()
+  } finally {
+    $ErrorActionPreference = $prevEAP
+  }
   return $LASTEXITCODE
 }
 
@@ -1037,6 +1108,76 @@ cd "$DestDir"
   return Invoke-WslBashStreamed -Name $Name -Script $script -Login
 }
 
+# ---- 8. op-dispatch table and handler ------------------------------------
+#
+# Valid ops and the agents they support. PS 5.1 note: hashtable literal with
+# array values — no ?? or ternary operators.
+$script:OpAgentTable = @{
+  'apply-model-config'   = @('openclaw', 'hermes')
+  'open-dashboard'       = @('openclaw', 'hermes')
+  'approve-latest-device' = @('openclaw')
+  'find-dashboard-port'  = @('hermes')
+}
+
+function Invoke-OpDispatch {
+  param([string]$Name, [string]$DestDir, [string]$OpName, [string]$AgentName)
+
+  # Validate op name against the dispatch table.
+  if (-not $script:OpAgentTable.ContainsKey($OpName)) {
+    $valid = ($script:OpAgentTable.Keys | Sort-Object) -join ', '
+    Write-Err2 "Unknown op '$OpName'. Valid ops: $valid"
+    exit 1
+  }
+  # Validate agent for this op.
+  $validAgents = $script:OpAgentTable[$OpName]
+  if ($validAgents -notcontains $AgentName) {
+    $validStr = ($validAgents | Sort-Object) -join ', '
+    Write-Err2 "Op '$OpName' does not support agent '$AgentName'. Valid agents: $validStr"
+    exit 1
+  }
+
+  # Build env-block: forward INSTALLER_* / CLAW_* / INSTALLER_OP_* vars.
+  # INSTALLER_OP_STDIN_B64 is NOT forwarded here (it is the transport; the
+  # decoded content reaches the script via the temp file).
+  $forward = @()
+  Get-ChildItem env: | Where-Object {
+    ($_.Name -like 'INSTALLER_*' -or $_.Name -like 'CLAW_*') -and
+    $_.Name -ne 'INSTALLER_REPO_DIR' -and
+    $_.Name -ne 'INSTALLER_WSL_DISTRO' -and
+    $_.Name -ne 'CLAW_SESSION_LOG' -and
+    $_.Name -ne 'INSTALLER_OP_STDIN_B64'
+  } | ForEach-Object {
+    $v = $_.Value -replace "'", "'\''"
+    $forward += ("export {0}='{1}'" -f $_.Name, $v)
+  }
+  $envBlock = $forward -join "`n"
+
+  # Pull stdin payload (set by Rust dispatch_op before invoking powershell).
+  $stdinB64 = $env:INSTALLER_OP_STDIN_B64
+  if ($null -eq $stdinB64) { $stdinB64 = '' }
+
+  # Build the bash script body. When stdin payload exists, $_op_stdin_tmp is
+  # available (injected by Invoke-WslBashStreamed's preamble) and we redirect
+  # from it. When not, we redirect from /dev/null.
+  if ($stdinB64 -ne '') {
+    $stdinRedir = '< "$_op_stdin_tmp"'
+  } else {
+    $stdinRedir = '< /dev/null'
+  }
+
+  $script = @"
+set -e
+$envBlock
+cd "$DestDir"
+./agents/$AgentName/$OpName.sh $stdinRedir
+"@
+
+  Write-Display "正在 WSL（$Name）中执行 $AgentName/$OpName…"
+  if ($DryRun) { Write-Host "  [dry-run] wsl -d $Name -- bash <$AgentName/$OpName.sh>"; return 0 }
+
+  return Invoke-WslBashStreamed -Name $Name -Script $script -Login -StdinB64 $stdinB64
+}
+
 # ---- main -----------------------------------------------------------------
 
 # -DebugMode: start background job to tail session log to host console.
@@ -1056,6 +1197,51 @@ try {
   Write-Host ""
   Write-Step "claw-installer Windows bootstrap (distro=$Distro, repo=$RepoDir)"
   Write-Host ""
+
+  # =========================================================================
+  # FAST-PATH: -Op / -Service dispatch after install completed.
+  # =========================================================================
+  # Skips ALL the slow preflight (build check, WSL --status probe, WSL --list
+  # roundtrips, UAC elevation, systemd enable check, full shell/ recopy into
+  # WSL) — those cost ~10s per op invocation and are redundant when install
+  # has already done them once. The op script itself surfaces real errors if
+  # WSL is somehow broken.
+  #
+  # We still do ONE cheap distro-name resolution (`wsl --list -q` is ~1s) so
+  # that 'Ubuntu' input still works when the user actually has 'Ubuntu-24.04'
+  # — without it `wsl.exe -d Ubuntu` would hard-fail.
+  if ($FastPath -and ($Op -or $Service)) {
+    Write-Step "Fast-path enabled: skipping preflight + repo copy"
+    $actual = Resolve-InstalledDistro -Name $Distro
+    if ($null -eq $actual) {
+      Write-Err2 ("Distro '{0}' not found in WSL — install may be incomplete or the distro was removed." -f $Distro)
+      Write-Log  "Run install again from the GUI (Install button) — that path does the full preflight and re-copies shell/ into WSL."
+      exit 3
+    }
+    if ($actual -ne $Distro) {
+      Write-Step "Resolved '$Distro' to '$actual'."
+      $Distro = $actual
+    }
+    # The shell/ tree was placed at $HOME/claw-installer-src by install's
+    # Copy-RepoIntoWsl. We reuse that path without re-copying — install
+    # is the only legitimate source of updates to this tree.
+    $destInWsl = '$HOME/claw-installer-src'
+
+    if ($Op) {
+      if (-not $Agent) {
+        Write-Err2 "-Op requires -Agent to be specified."
+        exit 1
+      }
+      $rc = Invoke-OpDispatch -Name $Distro -DestDir $destInWsl -OpName $Op -AgentName $Agent
+      exit $rc
+    }
+    if ($Service -and $Agent) {
+      $rc = Invoke-BashService -Name $Distro -DestDir $destInWsl -AgentName $Agent -ServiceAction $Service
+      exit $rc
+    }
+    Write-Err2 "-FastPath requires -Op or -Service mode (got Op='$Op' Service='$Service')."
+    exit 1
+  }
 
   # Preflight order per spec Implementation Notes:
   #   1. Build check (exits 3 if too old)
@@ -1136,6 +1322,16 @@ try {
 
   $null = Ensure-Systemd -Name $Distro
   $destInWsl = Copy-RepoIntoWsl -Name $Distro -LocalPath $RepoDir
+
+  # -Op dispatch: run a named op via the unified op-dispatch protocol.
+  if ($Op) {
+    if (-not $Agent) {
+      Write-Err2 "-Op requires -Agent to be specified."
+      exit 1
+    }
+    $rc = Invoke-OpDispatch -Name $Distro -DestDir $destInWsl -OpName $Op -AgentName $Agent
+    exit $rc
+  }
 
   # -Service dispatch: run a lifecycle action for a specific agent.
   if ($Service -and $Agent) {

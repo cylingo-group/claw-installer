@@ -151,7 +151,7 @@ export const useInstaller = create<State>((set, get) => ({
     skipBrowser: false,
   },
   showAdvanced: false,
-  settingsTarget: null,
+  settingsTarget: "openclaw",
   uninstallTarget: null,
   installStartedAt: null,
   installEndedAt: null,

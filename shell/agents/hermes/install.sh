@@ -143,8 +143,49 @@ install_hermes_agent() {
   [[ -x "$HERMES_BIN"         ]] && manifest_record hermes_bin         "$HERMES_BIN"         "$bin_status"
 
   register_hermes_gateway_service
+  prebuild_hermes_web_ui
 
   _print_hermes_summary
+}
+
+# Pre-build the hermes dashboard's web UI (Vite → hermes_cli/web_dist/).
+# Without this, the first `hermes dashboard` open spends ~15-30s running
+# `npm install && npm run build` before the server starts. Pre-building
+# moves that cost into install where the user already expects a wait, so
+# `open-dashboard` later goes hermes-binary-runtime → uvicorn → ready in
+# ~2-3s. `_web_ui_build_needed` in hermes_cli/main.py auto-detects a
+# fresh dist and short-circuits the runtime build.
+#
+# Best-effort: build failures don't abort install (the runtime build path
+# will retry on first dashboard open). Set INSTALLER_HERMES_SKIP_PREBUILD=1
+# to bypass entirely (useful in restricted networks where npm install
+# from registry would hang anyway).
+prebuild_hermes_web_ui() {
+  if [[ -n "${INSTALLER_HERMES_SKIP_PREBUILD:-}" ]]; then
+    log "prebuild_hermes_web_ui: INSTALLER_HERMES_SKIP_PREBUILD set — skipping"
+    return 0
+  fi
+  local web_dir="$HERMES_INSTALL_DIR/web"
+  local dist_index="$HERMES_INSTALL_DIR/hermes_cli/web_dist/index.html"
+  if [[ ! -d "$web_dir" || ! -f "$web_dir/package.json" ]]; then
+    log "prebuild_hermes_web_ui: no $web_dir/package.json — skipping"
+    return 0
+  fi
+  if [[ -f "$dist_index" && -z "${INSTALLER_FORCE_REINSTALL:-}" ]]; then
+    log "prebuild_hermes_web_ui: $dist_index already present — skipping (set INSTALLER_FORCE_REINSTALL=1 to rebuild)"
+    return 0
+  fi
+  if ! command -v npm >/dev/null 2>&1; then
+    log "prebuild_hermes_web_ui: npm not on PATH — skipping (dashboard will build on first open)"
+    return 0
+  fi
+  display "@@step:hermes-web-prebuild:正在预构建 Hermes Dashboard 前端（首次约 30-60s）…"
+  if run_with_timeout 600 bash -c "cd '$web_dir' && npm install --silent && npm run build" </dev/null; then
+    display "✓ Hermes Dashboard 前端已预构建"
+  else
+    log "prebuild_hermes_web_ui: build failed — dashboard will retry on first open"
+    display "⚠ Hermes Dashboard 前端预构建失败（首次打开 dashboard 时会重试构建）"
+  fi
 }
 
 # Register the launchd/systemd service definition for `hermes gateway` so the

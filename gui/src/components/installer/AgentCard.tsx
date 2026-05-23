@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { ChevronRight, Loader2, Play, Settings, Square, Trash2 } from "lucide-react";
+import { ChevronRight, LayoutDashboard, Loader2, Play, Settings, Square, Trash2 } from "lucide-react";
 import {
   useInstaller,
   isAgentConfigured,
@@ -22,6 +22,7 @@ export function AgentCard({ agent }: { agent: AgentState }) {
   const stopService = useInstaller((s) => s.stopService);
   const openUninstall = useInstaller((s) => s.openUninstall);
   const openSettings = useInstaller((s) => s.openSettings);
+  const openDashboard = useInstaller((s) => s.openDashboard);
   const settingsTarget = useInstaller((s) => s.settingsTarget);
   const isBootstrapping = useInstaller((s) => s.isBootstrapping);
   const hostStatus = useInstaller((s) => s.hostStatus);
@@ -33,8 +34,11 @@ export function AgentCard({ agent }: { agent: AgentState }) {
 
   const serviceActionAgent = useInstaller((s) => s.serviceActionAgent);
   const serviceActionKind = useInstaller((s) => s.serviceActionKind);
+  const dashboardActionAgent = useInstaller((s) => s.dashboardActionAgent);
   const lifecycleBusy = serviceActionAgent === agent.id;
   const otherLifecycleBusy = serviceActionAgent !== null && !lifecycleBusy;
+  const dashboardBusy = dashboardActionAgent === agent.id;
+  const otherDashboardBusy = dashboardActionAgent !== null && !dashboardBusy;
 
   const installed = agent.status !== "not-installed" && agent.status !== "error";
   const isError = agent.status === "error";
@@ -87,6 +91,17 @@ export function AgentCard({ agent }: { agent: AgentState }) {
                 )}
               </IconBtn>
             )}
+            <IconBtn
+              label={dashboardBusy ? "启动中…" : "打开 Dashboard"}
+              onClick={() => openDashboard(agent.id)}
+              disabled={lifecycleBusy || dashboardBusy || otherDashboardBusy}
+            >
+              {dashboardBusy ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <LayoutDashboard className="h-4 w-4" strokeWidth={1.6} />
+              )}
+            </IconBtn>
             <IconBtn label="配置" onClick={() => openSettings(agent.id)} disabled={lifecycleBusy}>
               <Settings className="h-4 w-4" strokeWidth={1.6} />
             </IconBtn>

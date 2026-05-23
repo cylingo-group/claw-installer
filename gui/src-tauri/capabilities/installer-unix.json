@@ -27,6 +27,7 @@
       "identifier": "opener:allow-reveal-item-in-dir",
       "allow": [{ "path": "**" }]
     },
+    "opener:allow-open-url",
     "clipboard-manager:allow-write-text"
   ]
 }
