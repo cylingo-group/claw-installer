@@ -15,8 +15,8 @@ import type {
 
 /**
  * Persisted shape mirrored to ~/.claw-installer/config.json (resp.
- * %APPDATA%\claw-installer\config.json on Windows) so the GUI's "已配置" /
- * "已配对" badges + input fields survive across restarts. Owned by the TS
+ * %APPDATA%\claw-installer\config.json on Windows) so the GUI's "configured" /
+ * "paired" badges + input fields survive across restarts. Owned by the TS
  * side; Rust treats the payload as opaque JSON.
  *
  * v1 (legacy): `agents.<id>` held a bare ModelConfig — read by

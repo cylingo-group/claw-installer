@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { useInstaller, IS_TAURI_ENV } from "@/store/installer-store";
 
 interface ModalContent {
@@ -9,26 +10,30 @@ interface ModalContent {
   showReboot: boolean;
 }
 
-function getContent(kind: string): ModalContent {
+function getContent(
+  kind: string,
+  t: (key: string) => string,
+): ModalContent {
   if (kind === "distro-firstrun") {
     return {
-      title: "需要完成 Ubuntu 首次设置",
-      body: "请在弹出的 Ubuntu 窗口中设置 Linux 用户名和密码，然后重新打开安装程序。",
-      primaryLabel: "我已完成",
+      title: t("reboot.distroFirstrunTitle"),
+      body: t("reboot.distroFirstrunBody"),
+      primaryLabel: t("reboot.distroFirstrunPrimary"),
       primaryDestructive: false,
       showReboot: false,
     };
   }
   return {
-    title: "需要重启 Windows",
-    body: "WSL 2 安装完成，需要重启 Windows 才能继续。重启后重新打开安装程序以完成安装。",
-    primaryLabel: "现在重启",
+    title: t("reboot.wslFeatureTitle"),
+    body: t("reboot.wslFeatureBody"),
+    primaryLabel: t("reboot.wslFeaturePrimary"),
     primaryDestructive: true,
     showReboot: true,
   };
 }
 
 export function RebootModal() {
+  const { t } = useTranslation();
   const open = useInstaller((s) => s.rebootModalOpen);
   const kind = useInstaller((s) => s.rebootModalKind);
   const dismiss = useInstaller((s) => s.dismissRebootModal);
@@ -37,7 +42,7 @@ export function RebootModal() {
 
   if (!open) return null;
 
-  const content = getContent(kind);
+  const content = getContent(kind, t);
 
   async function handlePrimary() {
     if (!content.showReboot) {
@@ -73,7 +78,7 @@ export function RebootModal() {
         <p className="mt-3 text-sm text-foreground/70">{content.body}</p>
 
         {/* OQ-1: static banner shown during elevated re-spawn phase */}
-        <p className="mt-2 text-xs text-foreground/50">正在安装 WSL 2，请在 UAC 对话框中授权…</p>
+        <p className="mt-2 text-xs text-foreground/50">{t("reboot.waitingUac")}</p>
 
         {error && (
           <p className="mt-2 text-xs text-danger">{error}</p>
@@ -86,7 +91,7 @@ export function RebootModal() {
               disabled={rebooting}
               className="rounded border border-border bg-background px-3 py-1.5 text-sm text-foreground hover:border-foreground/40 disabled:opacity-50"
             >
-              稍后
+              {t("common.later")}
             </button>
           )}
           <button
@@ -98,7 +103,7 @@ export function RebootModal() {
                 : "rounded border border-border bg-background px-3 py-1.5 text-sm text-foreground hover:border-foreground/40 disabled:opacity-50"
             }
           >
-            {rebooting ? "正在重启…" : content.primaryLabel}
+            {rebooting ? t("reboot.rebooting") : content.primaryLabel}
           </button>
         </div>
       </div>

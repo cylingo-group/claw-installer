@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { useInstaller, IS_TAURI_ENV } from "@/store/installer-store";
 import { cn } from "@/lib/utils";
 
@@ -25,6 +26,7 @@ const BODY_HEIGHT = VISIBLE_LINES * LINE_HEIGHT; // 168px
 const PATH_REGEX = /((?:\/|[A-Z]:\\)[^\s]+\.log)/g;
 
 export function LogStrip() {
+  const { t } = useTranslation();
   const logTail = useInstaller((s) => s.logTail);
   const logPath = useInstaller((s) => s.currentLogPath);
   const logExpanded = useInstaller((s) => s.logExpanded);
@@ -119,13 +121,13 @@ export function LogStrip() {
         type="button"
         onClick={toggleExpanded}
         aria-expanded={logExpanded}
-        aria-label={logExpanded ? "收起执行日志" : "展开执行日志"}
+        aria-label={logExpanded ? t("log.collapse") : t("log.expand")}
         className="flex w-full items-center justify-between px-3 py-1.5 transition-colors hover:bg-foreground/[0.02]"
       >
         <span className="flex min-w-0 flex-1 items-center gap-2">
           <Chevron open={logExpanded} />
-          <span className="shrink-0 text-[10px] font-medium uppercase tracking-wide text-muted" lang="en">
-            执行日志
+          <span className="shrink-0 text-[10px] font-medium uppercase tracking-wide text-muted">
+            {t("log.title")}
           </span>
           {transitioning && (
             <span className="relative inline-flex h-1.5 w-1.5 shrink-0">
@@ -147,14 +149,14 @@ export function LogStrip() {
             </span>
           )}
           {logTail.length > 0 && (
-            <span className="shrink-0 text-[10px] text-muted/70 tabular-nums" lang="en">
-              · {logTail.length} 行
+            <span className="shrink-0 text-[10px] text-muted/70 tabular-nums">
+              · {logTail.length} {t("log.linesSuffix")}
             </span>
           )}
         </span>
         <div className="flex items-center gap-0.5">
           <ToolbarBtn
-            label={copyHint === "ok" ? "已复制" : copyHint === "err" ? "复制失败" : "复制日志"}
+            label={copyHint === "ok" ? t("common.copied") : copyHint === "err" ? t("common.copyFailed") : t("log.copyLogs")}
             onClick={handleCopy}
             disabled={logTail.length === 0}
             tone={copyHint === "ok" ? "success" : copyHint === "err" ? "danger" : "neutral"}
@@ -162,7 +164,7 @@ export function LogStrip() {
             {copyHint === "ok" ? <CheckIcon /> : <CopyIcon />}
           </ToolbarBtn>
           <ToolbarBtn
-            label="打开日志所在文件夹"
+            label={t("log.openLogsFolder")}
             onClick={handleOpenFolder}
             disabled={!logPath}
           >
@@ -190,7 +192,7 @@ export function LogStrip() {
         >
           {logTail.length === 0 ? (
             <div className="grid h-full place-items-center text-center text-[11px] text-muted/60">
-              等待输出…
+              {t("log.waitingOutput")}
             </div>
           ) : (
             <ul>

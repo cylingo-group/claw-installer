@@ -1,4 +1,5 @@
 import { Minus, Plus, X } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { IS_TAURI_ENV } from "@/store/installer-store";
 
 // Platform detection via the modern userAgentData API (Chrome 90+) with a
@@ -38,6 +39,7 @@ function MacTrafficLight() {
   // Tailwind `group` + `group-hover` shows glyphs on hover across the whole
   // cluster simultaneously — matches macOS behaviour where moving onto any one
   // dot reveals the icons on all three.
+  const { t } = useTranslation();
   return (
     <div
       data-tauri-no-drag
@@ -45,7 +47,7 @@ function MacTrafficLight() {
     >
       {/* Red — close / hide to tray */}
       <button
-        aria-label="关闭"
+        aria-label={t("titlebar.close")}
         onClick={() => void hideWindow()}
         className="relative grid h-3 w-3 shrink-0 place-items-center rounded-full border border-black/10 transition-opacity focus:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
         style={{ backgroundColor: "#FF5F57" }}
@@ -58,7 +60,7 @@ function MacTrafficLight() {
 
       {/* Yellow — minimize */}
       <button
-        aria-label="最小化"
+        aria-label={t("titlebar.minimize")}
         onClick={() => void minimizeWindow()}
         className="relative grid h-3 w-3 shrink-0 place-items-center rounded-full border border-black/10 transition-opacity focus:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
         style={{ backgroundColor: "#FEBC2E" }}
@@ -72,7 +74,7 @@ function MacTrafficLight() {
       {/* Green — disabled (window is fixed size, no maximize). Keep the dot for
           visual symmetry; show the glyph dimmed on hover. */}
       <button
-        aria-label="最大化（不可用）"
+        aria-label={t("titlebar.maximize")}
         onClick={() => {
           /* no-op: maximize is disabled for this fixed-size window */
         }}
@@ -91,17 +93,18 @@ function MacTrafficLight() {
 // ── Windows minimize + close buttons ─────────────────────────────────────────
 
 function WindowsControls() {
+  const { t } = useTranslation();
   return (
     <div data-tauri-no-drag className="ml-auto flex items-stretch">
       <button
-        aria-label="最小化"
+        aria-label={t("titlebar.minimize")}
         onClick={() => void minimizeWindow()}
         className="flex h-8 w-10 items-center justify-center text-foreground/70 transition-colors hover:bg-white/[0.08] focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-white/40"
       >
         <Minus className="h-3.5 w-3.5" strokeWidth={2} />
       </button>
       <button
-        aria-label="关闭"
+        aria-label={t("titlebar.close")}
         onClick={() => void hideWindow()}
         className="flex h-8 w-10 items-center justify-center text-foreground/70 transition-colors hover:bg-[#E81123] hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-white/40"
       >

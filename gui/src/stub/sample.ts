@@ -13,20 +13,20 @@ interface StepEntry {
 }
 
 const STEP_SEQUENCE_OPENCLAW: StepEntry[] = [
-  { key: "base-deps",  label: "正在安装系统依赖…",     detail: "curl / git / openssl" },
-  { key: "fnm",        label: "正在安装 fnm…",          detail: "Node 版本管理器" },
-  { key: "node",       label: "正在配置 Node 运行时…",  detail: "Node v24" },
-  { key: "pnpm",       label: "正在准备 pnpm…",         detail: "via corepack" },
-  { key: "npmrc",      label: "正在写入镜像源…",         detail: "~/.npmrc" },
-  { key: "openclaw",   label: "正在安装 OpenClaw…",     detail: "pnpm add -g openclaw" },
-  { key: "done",       label: "✓ 完成",                  detail: "" },
+  { key: "base-deps",  label: "Installing base dependencies…", detail: "curl / git / openssl" },
+  { key: "fnm",        label: "Installing fnm…",               detail: "Node version manager" },
+  { key: "node",       label: "Configuring Node runtime…",     detail: "Node v24" },
+  { key: "pnpm",       label: "Preparing pnpm…",               detail: "via corepack" },
+  { key: "npmrc",      label: "Writing npm registry mirror…",  detail: "~/.npmrc" },
+  { key: "openclaw",   label: "Installing OpenClaw…",          detail: "pnpm add -g openclaw" },
+  { key: "done",       label: "✓ Done",                        detail: "" },
 ];
 
 const STEP_SEQUENCE_HERMES: StepEntry[] = [
-  { key: "base-deps",     label: "正在安装系统依赖…",        detail: "" },
-  { key: "system-tools",  label: "正在安装系统工具…",        detail: "ripgrep / ffmpeg" },
-  { key: "hermes",        label: "正在安装 Hermes…",         detail: "克隆代码仓库" },
-  { key: "done",          label: "✓ 完成",                    detail: "" },
+  { key: "base-deps",     label: "Installing base dependencies…", detail: "" },
+  { key: "system-tools",  label: "Installing system tools…",      detail: "ripgrep / ffmpeg" },
+  { key: "hermes",        label: "Installing Hermes…",            detail: "Cloning repository" },
+  { key: "done",          label: "✓ Done",                        detail: "" },
 ];
 
 const STEP_INTERVAL_MS = 1200;
@@ -84,8 +84,8 @@ export function runStubUninstaller(
   let cancelled = false;
 
   const steps: StepEntry[] = [
-    { key: "uninstall", label: "正在卸载…", detail: "按 manifest 逆序回滚" },
-    { key: "done",      label: "✓ 卸载完成", detail: "" },
+    { key: "uninstall", label: "Uninstalling…", detail: "Reversing manifest entries" },
+    { key: "done",      label: "✓ Uninstall complete", detail: "" },
   ];
 
   async function run() {

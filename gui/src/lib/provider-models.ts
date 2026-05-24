@@ -80,7 +80,7 @@ export async function fetchProviderModels(
   options: { timeoutMs?: number; signal?: AbortSignal } = {},
 ): Promise<string[]> {
   if (apiKey.trim() === "") {
-    throw new Error("缺少 API Key");
+    throw new Error("Missing API Key");
   }
 
   const apiStyle: ApiStyle =
@@ -91,7 +91,7 @@ export async function fetchProviderModels(
       : KNOWN_BASE_URLS[fetchKind.id];
 
   if (baseUrl === "") {
-    throw new Error("缺少 Base URL");
+    throw new Error("Missing Base URL");
   }
 
   const url = buildModelsUrl(baseUrl, apiStyle);
@@ -120,9 +120,9 @@ export async function fetchProviderModels(
     options.signal?.removeEventListener("abort", linkAbort);
     clearTimeout(timer);
     if (err instanceof DOMException && err.name === "AbortError") {
-      throw new Error("请求超时或被取消");
+      throw new Error("Request timed out or was cancelled");
     }
-    throw new Error(`请求失败：${err instanceof Error ? err.message : err}`);
+    throw new Error(`Request failed: ${err instanceof Error ? err.message : err}`);
   }
   options.signal?.removeEventListener("abort", linkAbort);
   clearTimeout(timer);
@@ -144,7 +144,7 @@ export async function fetchProviderModels(
     body = (await resp.json()) as OpenAiModelEnvelope;
   } catch (err) {
     throw new Error(
-      `响应不是合法 JSON：${err instanceof Error ? err.message : err}`,
+      `Response was not valid JSON: ${err instanceof Error ? err.message : err}`,
     );
   }
 
@@ -155,7 +155,7 @@ export async function fetchProviderModels(
     : [];
 
   if (ids.length === 0) {
-    throw new Error("响应中没有可用模型");
+    throw new Error("Response contained no usable models");
   }
 
   return [...new Set(ids)].sort((a, b) => a.localeCompare(b));

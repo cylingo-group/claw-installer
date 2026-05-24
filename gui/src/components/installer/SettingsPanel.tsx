@@ -20,6 +20,7 @@ import {
   RefreshCw,
   Sparkles,
 } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import {
   useInstaller,
   isProviderConfigured,
@@ -55,10 +56,14 @@ import { cn } from "@/lib/utils";
 
 // ---- Provider taxonomy --------------------------------------------------------
 
+type TFn = (key: string, options?: Record<string, unknown>) => string;
+
 interface KnownProviderMeta {
   id: KnownProvider;
+  /** English display label — short, ASCII brand names that don't need i18n. */
   label: string;
-  modelPlaceholder: string;
+  /** i18n key for the input placeholder ("e.g. deepseek-chat"). */
+  modelPlaceholderKey: string;
   docsUrl: string;
 }
 
@@ -66,13 +71,13 @@ const KNOWN_PROVIDERS: KnownProviderMeta[] = [
   {
     id: "deepseek",
     label: "DeepSeek",
-    modelPlaceholder: "例：deepseek-chat",
+    modelPlaceholderKey: "settings.modelPresets.deepseekPlaceholder",
     docsUrl: "https://api-docs.deepseek.com/zh-cn/",
   },
   {
     id: "kimi",
     label: "Kimi",
-    modelPlaceholder: "例：moonshot-v1-8k",
+    modelPlaceholderKey: "settings.modelPresets.moonshotPlaceholder",
     docsUrl: "https://www.kimi.com/code/docs/",
   },
   {
@@ -81,85 +86,83 @@ const KNOWN_PROVIDERS: KnownProviderMeta[] = [
     // `kimi-for-coding` model — surface it as its own card so users with a
     // coding-plan key don't hit 401s against the standard Kimi base URL.
     id: "kimi-coding",
-    label: "Kimi 编程套餐",
-    modelPlaceholder: "kimi-for-coding",
+    label: "Kimi coding plan",
+    modelPlaceholderKey: "settings.modelPresets.kimiCodingLabel",
     docsUrl: "https://platform.kimi.ai/",
   },
   {
     id: "minimax",
     label: "MiniMax",
-    modelPlaceholder: "例：abab6.5s-chat",
+    modelPlaceholderKey: "settings.modelPresets.minimaxPlaceholder",
     docsUrl: "https://platform.minimaxi.com/docs/guides/quickstart-preparation",
   },
 ];
 
-const PROVIDER_LABEL: Record<ModelProvider, string> = {
-  xinyuan: "心元",
-  deepseek: "DeepSeek",
-  kimi: "Kimi",
-  "kimi-coding": "Kimi 编程套餐",
-  minimax: "MiniMax",
-  custom: "自定义设置",
-};
+/** Resolve a localized label for any provider. ASCII-only brand names are
+ *  returned as-is; xinyuan / kimi-coding / custom have i18n keys. */
+function providerLabel(t: TFn, p: ModelProvider): string {
+  switch (p) {
+    case "xinyuan":
+      return t("settings.providerLabels.xinyuan");
+    case "kimi-coding":
+      return t("settings.providerLabels.kimiCoding");
+    case "custom":
+      return t("settings.providerLabels.custom");
+    default:
+      return p === "deepseek"
+        ? "DeepSeek"
+        : p === "kimi"
+        ? "Kimi"
+        : p === "minimax"
+        ? "MiniMax"
+        : p;
+  }
+}
 
-const API_STYLE_LABEL: Record<ApiStyle, string> = {
-  openai: "OpenAI 风格",
-  anthropic: "Anthropic 风格",
-};
+function apiStyleLabel(t: TFn, s: ApiStyle): string {
+  return s === "anthropic"
+    ? t("settings.apiStyleAnthropic")
+    : t("settings.apiStyleOpenai");
+}
 
-const CHANNEL_LABELS: Record<ChannelId, string> = {
-  wechat: "微信",
-  feishu: "飞书",
-  dingtalk: "钉钉",
-  bubbolink: "BubboLink",
-};
+function channelLabel(t: TFn, c: ChannelId): string {
+  return c === "bubbolink" ? "BubboLink" : t(`settings.channelLabels.${c}`);
+}
 
 interface DocChannelMeta {
   id: Exclude<ChannelId, "bubbolink">;
   docsUrl: string;
-  blurb: string;
 }
 
-// 微信/飞书/钉钉 are not auto-configurable from this GUI — see
+// WeChat/Feishu/DingTalk are not auto-configurable from this GUI — see
 // docs/research/2026-05-23-openclaw-channels-auto-config/report.md (TL;DR:
 // feishu silently drops --token, weixin requires interactive QR, dingtalk
 // has no official docs.openclaw.ai page yet). v1 simply links to each
 // channel's integration docs and lets the user follow them externally.
 const DOC_CHANNELS: DocChannelMeta[] = [
-  {
-    id: "wechat",
-    docsUrl: "https://docs.openclaw.ai/channels/wechat",
-    blurb: "OpenClaw 个人微信接入指南",
-  },
-  {
-    id: "feishu",
-    docsUrl: "https://docs.openclaw.ai/channels/feishu",
-    blurb: "OpenClaw 飞书 / Lark 接入指南",
-  },
-  {
-    id: "dingtalk",
-    docsUrl: "https://github.com/DingTalk-Real-AI/dingtalk-openclaw-connector",
-    blurb: "官方 OpenClaw 钉钉 Channel 插件",
-  },
+  { id: "wechat",   docsUrl: "https://docs.openclaw.ai/channels/wechat" },
+  { id: "feishu",   docsUrl: "https://docs.openclaw.ai/channels/feishu" },
+  { id: "dingtalk", docsUrl: "https://github.com/DingTalk-Real-AI/dingtalk-openclaw-connector" },
 ];
 
-// "何为 BubboLink?" link target — npm page is the safest stable URL we can
+// "What is BubboLink?" link target — npm page is the safest stable URL we can
 // surface today. Swap to a product landing page once one exists.
 const BUBBOLINK_INTRO_URL = "https://www.npmjs.com/package/@bubbolink/cli";
 
-function activeProviderSummary(model: ModelConfig): string {
+function activeProviderSummary(t: TFn, model: ModelConfig): string {
   switch (model.active) {
     case "xinyuan":
-      return "心元 · 新用户免费用";
+      return t("settings.xinyuanSummary");
     case "custom":
       return isCustomConfigured(model.custom)
-        ? model.custom.name || "自定义设置"
-        : "自定义设置 · 未填写";
+        ? model.custom.name || t("settings.providerLabels.custom")
+        : t("settings.customNotFilled");
     default: {
       const creds = model[model.active];
+      const label = providerLabel(t, model.active);
       return isProviderConfigured(creds)
-        ? `${PROVIDER_LABEL[model.active]} · ${creds.modelName}`
-        : `${PROVIDER_LABEL[model.active]} · 未填写`;
+        ? `${label} · ${creds.modelName}`
+        : t("settings.summarySuffixNotFilled", { label });
     }
   }
 }
@@ -182,19 +185,20 @@ function RootPage({
   paired: boolean;
   go: (v: View) => void;
 }) {
+  const { t } = useTranslation();
   return (
     <div className="space-y-2.5">
       <SectionCard
         icon={<BrainCircuit className="h-3.5 w-3.5" />}
-        title="模型配置"
-        summary={activeProviderSummary(model)}
+        title={t("settings.rootModelTitle")}
+        summary={activeProviderSummary(t, model)}
         accent
         onClick={() => go({ kind: "model" })}
       />
       <SectionCard
         icon={<MessageSquare className="h-3.5 w-3.5" />}
-        title="通道配置"
-        summary={paired ? "BubboLink · 已配对" : "BubboLink · 未配对"}
+        title={t("settings.rootChannelTitle")}
+        summary={paired ? t("settings.channelSummaryPaired") : t("settings.channelSummaryUnpaired")}
         onClick={() => go({ kind: "channel" })}
       />
     </div>
@@ -313,6 +317,7 @@ function ModelPage({ agent }: { agent: AgentState }) {
  * permanent footer at the panel level (not affected by content height).
  */
 function useModelSaveController(agent: AgentState) {
+  const { t } = useTranslation();
   const updateAgentConfig = useInstaller((s) => s.updateAgentConfig);
   const [saveState, setSaveState] = useState<SaveState>({ kind: "idle" });
   const model = agent.config.model;
@@ -323,23 +328,23 @@ function useModelSaveController(agent: AgentState) {
 
   let disabledReason: string | null = null;
   if (model.active === "xinyuan") {
-    disabledReason = "心元 Provider 即将开放";
+    disabledReason = t("settings.saveBlockedXinyuanComingSoon");
   } else if (!savable) {
-    disabledReason = "请填齐必填字段";
+    disabledReason = t("settings.saveBlockedFillRequired");
   } else if (!statusAllowsSave) {
     switch (agent.status) {
       case "not-installed":
-        disabledReason = `请先安装 ${agent.name}`;
+        disabledReason = t("settings.saveBlockedInstallFirst", { name: agent.name });
         break;
       case "installing":
       case "uninstalling":
-        disabledReason = "Agent 正在进行安装/卸载，请稍候";
+        disabledReason = t("settings.saveBlockedAgentBusy");
         break;
       case "error":
-        disabledReason = `${agent.name} 处于错误状态，请先修复`;
+        disabledReason = t("settings.saveBlockedAgentErrored", { name: agent.name });
         break;
       default:
-        disabledReason = "Agent 状态不支持配置";
+        disabledReason = t("settings.saveBlockedAgentUnsupported");
     }
   }
 
@@ -365,7 +370,7 @@ function useModelSaveController(agent: AgentState) {
           apiKey: plan.apiKey,
         });
       }
-      // Stamp savedAt on the provider we just committed so the "已配置" badge
+      // Stamp savedAt on the provider we just committed so the "configured" badge
       // appears (and survives navigating away and back).
       const now = Date.now();
       const activeId = model.active;
@@ -403,7 +408,7 @@ function useModelSaveController(agent: AgentState) {
           ? err.message
           : typeof err === "string"
             ? err
-            : "未知错误";
+            : t("common.unknownError");
       setSaveState({ kind: "error", message });
     }
   }
@@ -418,6 +423,7 @@ function ModelSaveFooter({
   agent: AgentState;
   controller: ReturnType<typeof useModelSaveController>;
 }) {
+  const { t } = useTranslation();
   const { saveState, disabledReason, canSave, onSave } = controller;
   const isSaving = saveState.kind === "saving";
   return (
@@ -437,10 +443,10 @@ function ModelSaveFooter({
         {isSaving ? (
           <>
             <span className="h-3 w-3 animate-spin rounded-full border border-surface/40 border-t-surface" />
-            保存中…
+            {t("common.saving")}
           </>
         ) : (
-          `保存到 ${agent.name}`
+          t("settings.saveToAgent", { name: agent.name })
         )}
       </button>
 
@@ -462,6 +468,7 @@ function XinyuanCard({
   active: boolean;
   onActivate: () => void;
 }) {
+  const { t } = useTranslation();
   return (
     <div
       className={cn(
@@ -475,15 +482,15 @@ function XinyuanCard({
         </span>
         <div className="min-w-0 flex-1 leading-tight">
           <div className="text-[13px] font-semibold text-foreground">
-            新用户免费用
+            {t("settings.xinyuanCardFreeForNewUsers")}
           </div>
           <div className="mt-0.5 text-[10.5px] text-accent/90">
-            扫码即享 · 心元大模型限时福利
+            {t("settings.xinyuanCardScanToClaim")}
           </div>
         </div>
         <span className="inline-flex shrink-0 items-center gap-1 rounded-sm bg-accent px-1.5 py-0.5 text-[10px] font-medium text-surface">
           <Flame className="h-3 w-3" />
-          优惠
+          {t("settings.xinyuanCardOffer")}
         </span>
       </div>
 
@@ -503,10 +510,10 @@ function XinyuanCard({
             active ? "text-accent" : "text-foreground",
           )}
         >
-          心元
+          {t("settings.xinyuanCardTitle")}
         </span>
         <span className="rounded-sm bg-accent/15 px-1.5 py-0.5 text-[10px] font-medium text-accent">
-          推荐
+          {t("settings.xinyuanCardRecommended")}
         </span>
         <ChevronDown
           className={cn(
@@ -519,7 +526,7 @@ function XinyuanCard({
       {active && (
         <div className="border-t border-border/60 px-3.5 py-3">
           <p className="text-[11px] leading-relaxed text-muted">
-            心元大模型即将开放。届时新用户可在此一键开通免费额度。
+            {t("settings.xinyuanComingSoonBody")}
           </p>
           <button
             type="button"
@@ -527,7 +534,7 @@ function XinyuanCard({
             className="mt-2 inline-flex cursor-not-allowed items-center gap-1.5 rounded border border-border bg-background px-2.5 py-1 text-[11px] font-medium text-muted"
           >
             <Sparkles className="h-3 w-3" />
-            敬请期待
+            {t("settings.xinyuanComingSoonCta")}
           </button>
         </div>
       )}
@@ -550,6 +557,7 @@ function KnownProviderCard({
   onActivate: () => void;
   onChange: (patch: Partial<ProviderCredentials>) => void;
 }) {
+  const { t } = useTranslation();
   const [showKey, setShowKey] = useState(false);
   const filled = isProviderConfigured(creds);
 
@@ -580,7 +588,7 @@ function KnownProviderCard({
         </span>
         {filled && (
           <span className="rounded-sm bg-success/10 px-1.5 py-0.5 text-[10px] font-medium text-success">
-            已配置
+            {t("settings.configured")}
           </span>
         )}
         <ChevronDown
@@ -596,21 +604,21 @@ function KnownProviderCard({
           <div className="space-y-1">
             <div className="flex items-center justify-between">
               <label className="text-[11px] text-muted">
-                API Key<RequiredMark />
+                {t("settings.apiKeyLabel")}<RequiredMark />
               </label>
               <button
                 type="button"
                 onClick={() => setShowKey((v) => !v)}
-                aria-label={showKey ? "隐藏 API Key" : "显示 API Key"}
+                aria-label={showKey ? t("common.hideApiKey") : t("common.showApiKey")}
                 className="inline-flex items-center gap-1 text-[11px] text-muted transition-colors hover:text-foreground"
               >
                 {showKey ? (
                   <>
-                    <EyeOff className="h-3 w-3" /> 隐藏
+                    <EyeOff className="h-3 w-3" /> {t("common.hide")}
                   </>
                 ) : (
                   <>
-                    <Eye className="h-3 w-3" /> 显示
+                    <Eye className="h-3 w-3" /> {t("common.show")}
                   </>
                 )}
               </button>
@@ -635,7 +643,7 @@ function KnownProviderCard({
             apiKey={creds.apiKey}
             value={creds.modelName}
             onChange={(v) => onChange({ modelName: v })}
-            placeholder={provider.modelPlaceholder}
+            placeholder={t(provider.modelPlaceholderKey)}
           />
 
           <button
@@ -643,7 +651,7 @@ function KnownProviderCard({
             onClick={() => void openExternalUrl(provider.docsUrl)}
             className="inline-flex items-center gap-1 text-[11px] text-accent hover:underline"
           >
-            查看 {provider.label} API 文档
+            {t("settings.apiDocsLink", { label: provider.label })}
             <ExternalLink className="h-3 w-3" />
           </button>
         </div>
@@ -665,6 +673,7 @@ function CustomProviderCard({
   onActivate: () => void;
   onChange: (patch: Partial<CustomCredentials>) => void;
 }) {
+  const { t } = useTranslation();
   const [showKey, setShowKey] = useState(false);
   const [headersOpen, setHeadersOpen] = useState(false);
   const filled = isCustomConfigured(creds);
@@ -694,11 +703,11 @@ function CustomProviderCard({
             active ? "text-accent" : "text-foreground",
           )}
         >
-          {creds.name.trim() || "自定义设置"}
+          {creds.name.trim() || t("settings.providerLabels.custom")}
         </span>
         {filled && (
           <span className="rounded-sm bg-success/10 px-1.5 py-0.5 text-[10px] font-medium text-success">
-            已配置
+            {t("settings.configured")}
           </span>
         )}
         <ChevronDown
@@ -712,10 +721,10 @@ function CustomProviderCard({
       {active && (
         <div className="space-y-3 border-t border-border/60 px-3.5 py-3">
           <div className="space-y-1">
-            <label className="text-[11px] text-muted">API 风格</label>
+            <label className="text-[11px] text-muted">{t("settings.apiStyleLabel")}</label>
             <div
               role="radiogroup"
-              aria-label="API 风格"
+              aria-label={t("settings.apiStyleAria")}
               className="grid grid-cols-2 gap-1 rounded border border-border bg-background p-0.5"
             >
               {(["openai", "anthropic"] as ApiStyle[]).map((style) => {
@@ -734,7 +743,7 @@ function CustomProviderCard({
                         : "text-muted hover:text-foreground",
                     )}
                   >
-                    <span lang="en">{API_STYLE_LABEL[style]}</span>
+                    <span>{apiStyleLabel(t, style)}</span>
                   </button>
                 );
               })}
@@ -743,13 +752,13 @@ function CustomProviderCard({
 
           <div className="space-y-1">
             <label className="text-[11px] text-muted">
-              名称（用于本机识别）<RequiredMark />
+              {t("settings.customDisplayNameLabel")}<RequiredMark />
             </label>
             <input
               type="text"
               value={creds.name}
               onChange={(e) => onChange({ name: e.target.value })}
-              placeholder="例：内部网关"
+              placeholder={t("settings.customDisplayNamePlaceholder")}
               className="block w-full max-w-full rounded border border-border bg-background px-2.5 py-1.5 text-sm text-foreground placeholder:text-muted focus:border-accent focus:outline-none"
             />
           </div>
@@ -776,7 +785,7 @@ function CustomProviderCard({
           <div className="space-y-1">
             <div className="flex items-center justify-between">
               <label className="text-[11px] text-muted">
-                API Key<RequiredMark />
+                {t("settings.apiKeyLabel")}<RequiredMark />
               </label>
               <button
                 type="button"
@@ -785,11 +794,11 @@ function CustomProviderCard({
               >
                 {showKey ? (
                   <>
-                    <EyeOff className="h-3 w-3" /> 隐藏
+                    <EyeOff className="h-3 w-3" /> {t("common.hide")}
                   </>
                 ) : (
                   <>
-                    <Eye className="h-3 w-3" /> 显示
+                    <Eye className="h-3 w-3" /> {t("common.show")}
                   </>
                 )}
               </button>
@@ -820,8 +829,8 @@ function CustomProviderCard({
             onChange={(v) => onChange({ modelName: v })}
             placeholder={
               creds.apiStyle === "anthropic"
-                ? "例：claude-sonnet-4-6"
-                : "例：gpt-4o-mini"
+                ? t("settings.modelPlaceholderAnthropic")
+                : t("settings.modelPlaceholderOpenAI")
             }
           />
 
@@ -836,7 +845,7 @@ function CustomProviderCard({
               ) : (
                 <ChevronRight className="h-3 w-3" />
               )}
-              附加 Headers（可选）
+              {t("settings.extraHeaders")}
             </button>
             {headersOpen && (
               <textarea
@@ -890,6 +899,7 @@ function ModelNameField({
   onChange: (v: string) => void;
   placeholder?: string;
 }) {
+  const { t } = useTranslation();
   const [liveModels, setLiveModels] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -899,7 +909,7 @@ function ModelNameField({
     fetchKind.kind === "custom" ? fetchKind.baseUrl.trim() : "";
   const customApiStyle =
     fetchKind.kind === "custom" ? fetchKind.apiStyle : "";
-  // Some providers ship a single fixed model (e.g. Kimi 编程套餐) and don't
+  // Some providers ship a single fixed model (e.g. Kimi coding plan) and don't
   // expose /models for typical user keys — skip the network round-trip and
   // surface the curated list directly.
   const fixedModels =
@@ -959,20 +969,20 @@ function ModelNameField({
     <div className="space-y-1">
       <div className="flex items-center justify-between">
         <label className="text-[11px] text-muted">
-          模型名称<RequiredMark />
+          {t("settings.modelLabel")}<RequiredMark />
         </label>
         {!fixedModels && (
           <button
             type="button"
             onClick={() => void doFetch()}
             disabled={!canFetch || loading}
-            aria-label="刷新模型列表"
+            aria-label={t("settings.modelLabelRefreshAria")}
             title={
               canFetch
                 ? undefined
                 : fetchKind.kind === "custom"
-                  ? "填写 Base URL 和 API Key 后可刷新"
-                  : "填写 API Key 后可拉取最新列表"
+                  ? t("settings.refreshModelTipNeedBoth")
+                  : t("settings.refreshModelTipNeedKey")
             }
             className={cn(
               "inline-flex items-center gap-1 text-[11px] transition-colors",
@@ -982,7 +992,7 @@ function ModelNameField({
             )}
           >
             <RefreshCw className={cn("h-3 w-3", loading && "animate-spin")} />
-            {loading ? "拉取中…" : "刷新"}
+            {loading ? t("settings.fetchingModels") : t("common.refresh")}
           </button>
         )}
       </div>
@@ -995,7 +1005,7 @@ function ModelNameField({
       />
       {!loading && error && (
         <p className="text-[10.5px] text-muted">
-          模型列表拉取失败：{error}。可手动输入模型名。
+          {t("settings.modelFetchFailed", { error })}
         </p>
       )}
     </div>
@@ -1023,6 +1033,7 @@ function Combobox({
   placeholder?: string;
   loading?: boolean;
 }) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [highlight, setHighlight] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -1116,7 +1127,7 @@ function Combobox({
             }
           }
         }}
-        aria-label={open ? "收起" : "展开"}
+        aria-label={open ? t("settings.collapseList") : t("settings.expandList")}
         className={cn(
           "absolute inset-y-0 right-1.5 grid w-5 place-items-center text-muted",
           options.length === 0 && "opacity-40",
@@ -1156,11 +1167,13 @@ function ComboboxPopover({
   anchorRef: React.RefObject<HTMLInputElement | null>;
   options: string[];
   highlight: number;
+  // (next: i18n) `t` is captured via useTranslation inside the body
   onHighlight: (i: number) => void;
   onSelect: (i: number) => void;
   currentValue: string;
   loading?: boolean;
 }) {
+  const { t } = useTranslation();
   const [rect, setRect] = useState<{
     top: number;
     left: number;
@@ -1216,7 +1229,7 @@ function ComboboxPopover({
         );
       })}
       {loading && (
-        <div className="px-2.5 py-1.5 text-[10.5px] text-muted">拉取中…</div>
+        <div className="px-2.5 py-1.5 text-[10.5px] text-muted">{t("settings.fetchingModels")}</div>
       )}
     </div>,
     document.body,
@@ -1252,6 +1265,7 @@ function ChannelPage({ agent }: { agent: AgentState }) {
 }
 
 function DocChannelCard({ channel }: { channel: DocChannelMeta }) {
+  const { t } = useTranslation();
   return (
     <button
       type="button"
@@ -1263,10 +1277,10 @@ function DocChannelCard({ channel }: { channel: DocChannelMeta }) {
     >
       <span className="min-w-0 flex-1 leading-tight">
         <span className="block text-sm font-medium text-foreground">
-          {CHANNEL_LABELS[channel.id]}
+          {channelLabel(t, channel.id)}
         </span>
         <span className="mt-0.5 block truncate text-[11px] text-muted">
-          {channel.blurb}
+          {t(`settings.docChannels.${channel.id}`)}
         </span>
       </span>
       <ExternalLink className="h-3.5 w-3.5 shrink-0 text-muted" />
@@ -1280,6 +1294,7 @@ type PairState =
   | { kind: "error"; message: string };
 
 function BubboLinkCard({ agent }: { agent: AgentState }) {
+  const { t } = useTranslation();
   const updateAgentConfig = useInstaller((s) => s.updateAgentConfig);
   const [code, setCode] = useState("");
   const [state, setState] = useState<PairState>({ kind: "idle" });
@@ -1293,7 +1308,7 @@ function BubboLinkCard({ agent }: { agent: AgentState }) {
       await pairBubbolink(code, agent.id);
       // `bubbolink pair` (without --runtime) binds the relay account to every
       // runtime on the host, so stamp pairedAt on both agents — otherwise the
-      // other agent's "已配对" badge would lie.
+      // other agent's "paired" badge would lie.
       const now = Date.now();
       updateAgentConfig("openclaw", {
         channel: "bubbolink",
@@ -1325,7 +1340,7 @@ function BubboLinkCard({ agent }: { agent: AgentState }) {
           ? err.message
           : typeof err === "string"
             ? err
-            : "未知错误";
+            : t("common.unknownError");
       setState({ kind: "error", message });
     }
   }
@@ -1341,27 +1356,27 @@ function BubboLinkCard({ agent }: { agent: AgentState }) {
         <div className="min-w-0 flex-1 leading-tight">
           <div className="flex items-center gap-2">
             <span className="text-sm font-semibold text-foreground">
-              {CHANNEL_LABELS.bubbolink}
+              {t("settings.bubboLinkInteractive")}
             </span>
             <span className="inline-flex items-center gap-0.5 rounded-sm bg-accent px-1.5 py-0.5 text-[10px] font-medium text-surface">
               <Sparkles className="h-2.5 w-2.5" />
-              推荐
+              {t("settings.bubboLinkRecommended")}
             </span>
             {paired && (
               <span className="rounded-sm bg-success/10 px-1.5 py-0.5 text-[10px] font-medium text-success">
-                已配对
+                {t("settings.bubboLinkPaired")}
               </span>
             )}
           </div>
           <p className="mt-0.5 text-[11px] leading-relaxed text-muted">
-            从 BubboLink App 读取 4 位配对码，在本机完成绑定。
+            {t("settings.bubboLinkBlurb")}
           </p>
           <button
             type="button"
             onClick={() => void openExternalUrl(BUBBOLINK_INTRO_URL)}
             className="mt-1 inline-flex items-center gap-1 text-[11px] text-accent hover:underline"
           >
-            何为 BubboLink？
+            {t("settings.whatIsBubboLink")}
             <ExternalLink className="h-3 w-3" />
           </button>
         </div>
@@ -1369,7 +1384,7 @@ function BubboLinkCard({ agent }: { agent: AgentState }) {
 
       <div className="space-y-3 border-t border-border/60 bg-background/40 px-3.5 py-3.5">
         <label className="block text-[11px] text-muted">
-          配对码<RequiredMark />
+          {t("settings.pairCode")}<RequiredMark />
         </label>
         <div className="flex justify-center">
           <OtpInput
@@ -1396,12 +1411,12 @@ function BubboLinkCard({ agent }: { agent: AgentState }) {
           {state.kind === "pairing" ? (
             <>
               <span className="h-3 w-3 animate-spin rounded-full border border-surface/40 border-t-surface" />
-              配对中…
+              {t("settings.pairing")}
             </>
           ) : paired ? (
-            "重新配对"
+            t("settings.repair")
           ) : (
-            "配对"
+            t("settings.pair")
           )}
         </button>
         {state.kind === "error" && (
@@ -1436,6 +1451,7 @@ function OtpInput({
   onChange: (next: string) => void;
   disabled?: boolean;
 }) {
+  const { t } = useTranslation();
   const refs = useRef<(HTMLInputElement | null)[]>([]);
   const digits = Array.from({ length }, (_, i) => value[i] ?? "");
 
@@ -1514,7 +1530,7 @@ function OtpInput({
           onKeyDown={(e) => onCellKeyDown(i, e)}
           onPaste={(e) => onCellPaste(i, e)}
           onFocus={(e) => e.currentTarget.select()}
-          aria-label={`配对码第 ${i + 1} 位`}
+          aria-label={t("settings.pairCodePositionAria", { pos: i + 1 })}
           className={cn(
             "h-12 w-12 rounded-xl border-2 bg-background/60 text-center font-mono text-xl text-foreground caret-accent",
             "transition-[colors,box-shadow] focus:border-accent focus:bg-surface focus:shadow-[0_0_0_4px_rgba(99,102,241,0.15)] focus:outline-none",
@@ -1530,6 +1546,7 @@ function OtpInput({
 // ---- Main component -----------------------------------------------------------
 
 export function SettingsPanel() {
+  const { t } = useTranslation();
   const target = useInstaller((s) => s.settingsTarget);
   const agent = useInstaller((s) => (target ? s.agents[target] : null));
   const close = useInstaller((s) => s.closeSettings);
@@ -1543,13 +1560,13 @@ export function SettingsPanel() {
   let title: string;
   switch (view.kind) {
     case "root":
-      title = `${agentName} 配置`;
+      title = t("settings.titleAgentConfig", { name: agentName });
       break;
     case "model":
-      title = "模型配置";
+      title = t("settings.titleModel");
       break;
     case "channel":
-      title = "通道配置";
+      title = t("settings.titleChannel");
       break;
   }
 
@@ -1575,7 +1592,7 @@ export function SettingsPanel() {
       <header className="flex items-center gap-2 border-b border-border px-3 py-3">
         <button
           onClick={handleBack}
-          aria-label="返回"
+          aria-label={t("common.back")}
           className="grid h-7 w-7 shrink-0 place-items-center rounded text-muted transition-colors hover:bg-background hover:text-foreground"
         >
           <ChevronLeft className="h-4 w-4" />
@@ -1584,7 +1601,7 @@ export function SettingsPanel() {
           <div className="truncate text-sm font-semibold">{title}</div>
           {view.kind !== "root" && (
             <div className="mt-0.5 truncate text-[10px] text-muted">
-              {agentName} 配置
+              {t("settings.titleAgentConfig", { name: agentName })}
             </div>
           )}
         </div>

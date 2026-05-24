@@ -24,7 +24,7 @@ describe("installer-store: initial state", () => {
   });
 
   it("starts with hostStatus detecting", async () => {
-    // Pre-bootstrap, the banner shows a neutral "正在检测…" state so the
+    // Pre-bootstrap, the banner shows a neutral "Detecting…" state so the
     // sidebar doesn't look empty while readHostStatus is in flight.
     const { useInstaller } = await import("@/store/installer-store");
     const state = useInstaller.getState();
@@ -70,9 +70,9 @@ describe("installer-store: initial state", () => {
 describe("installer-store: setCurrentStep action", () => {
   it("updates currentStep and currentStepDetail for the given agent", async () => {
     const { useInstaller } = await import("@/store/installer-store");
-    useInstaller.getState().setCurrentStep("openclaw", "正在安装系统依赖…", "curl / git");
+    useInstaller.getState().setCurrentStep("openclaw", "Installing base dependencies…", "curl / git");
     const state = useInstaller.getState();
-    expect(state.agents.openclaw.currentStep).toBe("正在安装系统依赖…");
+    expect(state.agents.openclaw.currentStep).toBe("Installing base dependencies…");
     expect(state.agents.openclaw.currentStepDetail).toBe("curl / git");
     // hermes unaffected
     expect(state.agents.hermes.currentStep).toBeNull();
@@ -103,11 +103,11 @@ describe("installer-store: setAgentStatus action", () => {
   it("sets errorMessage on error status", async () => {
     const { useInstaller } = await import("@/store/installer-store");
     useInstaller.getState().setAgentStatus("openclaw", "error", {
-      errorMessage: "脚本退出码 1",
+      errorMessage: "Script exit code 1",
     });
     const state = useInstaller.getState();
     expect(state.agents.openclaw.status).toBe("error");
-    expect(state.agents.openclaw.errorMessage).toBe("脚本退出码 1");
+    expect(state.agents.openclaw.errorMessage).toBe("Script exit code 1");
   });
 });
 
@@ -149,7 +149,7 @@ describe("installer-store: confirmUninstall flow", () => {
 });
 
 describe("installer-store: cancelInstall", () => {
-  it("sets queued agents to error with 已被用户中止 message", async () => {
+  it("sets queued agents to error with 'Aborted by user' message", async () => {
     const { useInstaller } = await import("@/store/installer-store");
     useInstaller.setState((s) => ({
       agents: {
@@ -161,7 +161,7 @@ describe("installer-store: cancelInstall", () => {
     useInstaller.getState().cancelInstall();
     const state = useInstaller.getState();
     expect(state.agents.openclaw.status).toBe("error");
-    expect(state.agents.openclaw.errorMessage).toBe("已被用户中止");
+    expect(state.agents.openclaw.errorMessage).toBe("Aborted by user");
     expect(state.installQueue).toHaveLength(0);
   });
 });
@@ -200,7 +200,7 @@ describe("installer-store: stub mode parity (AC12)", () => {
     // Mock the stub module to capture calls
     const mockRunStubInstaller = vi.fn((_agents: string[], onEvent: (e: import("@/store/installer-store").InstallerEvent) => void) => {
       // Immediately fire a StepChanged event
-      onEvent({ type: "StepChanged", key: "base-deps", label: "正在安装系统依赖…", detail: "curl" });
+      onEvent({ type: "StepChanged", key: "base-deps", label: "Installing base dependencies…", detail: "curl" });
       onEvent({ type: "Finished", success: true, message: null });
       return () => {};
     });

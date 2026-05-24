@@ -3,6 +3,9 @@ import { createRoot } from "react-dom/client";
 import App from "./App";
 import "./styles/index.css";
 import "./styles/tokens.css";
+// Initialize i18n before React mounts so the first paint already sees
+// the resolved language. Side-effect-only import — no exports used here.
+import "./i18n";
 
 const root = createRoot(document.getElementById("root")!);
 root.render(

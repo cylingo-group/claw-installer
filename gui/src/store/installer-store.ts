@@ -35,7 +35,7 @@ export type ModelProvider =
 /** Built-in providers that accept user-supplied API key + model name. */
 export type KnownProvider = Exclude<ModelProvider, "xinyuan" | "custom">;
 
-/** Providers that have user-editable credentials (excludes the coming-soon 心元). */
+/** Providers that have user-editable credentials (excludes the coming-soon Xinyuan). */
 export type CredentialedProvider = Exclude<ModelProvider, "xinyuan">;
 
 export type ChannelId = "wechat" | "feishu" | "dingtalk" | "bubbolink";
@@ -47,7 +47,7 @@ export interface ProviderCredentials {
   modelName: string;
   /** Epoch ms at which these credentials were last successfully written to
    *  the agent's CLI config. Cleared whenever the user edits a field — the
-   *  "已配置" badge tracks this, not the locally-filled state. */
+   *  "configured" badge tracks this, not the locally-filled state. */
   savedAt: number | null;
 }
 
@@ -62,7 +62,7 @@ export interface CustomCredentials extends ProviderCredentials {
 /**
  * Per-provider credential storage plus the user's currently active selection.
  * Each known provider keeps its own apiKey/modelName so switching the active
- * one does not clobber what the user typed elsewhere. 心元 has no input fields
+ * one does not clobber what the user typed elsewhere. Xinyuan has no input fields
  * yet (it's a marketing placeholder for the new-user promo).
  */
 export interface ModelConfig {
@@ -78,7 +78,7 @@ export interface AgentConfig {
   model: ModelConfig;
   channel: ChannelId | null;
   /** Epoch ms of the last successful `bubbolink pair` for this agent. Drives
-   *  the "已配对" badge on the BubboLink card. Persisted to
+   *  the "paired" badge on the BubboLink card. Persisted to
    *  ~/.claw-installer/config.json (resp. %APPDATA%\claw-installer\config.json
    *  on Windows) so the badge survives restarts. */
   bubbolinkPairedAt: number | null;
@@ -200,8 +200,8 @@ export function isCustomFilled(c: CustomCredentials): boolean {
 }
 
 /**
- * "已配置" = both filled AND committed (savedAt non-null and not invalidated
- * by a subsequent edit). Used to drive the "已配置" badge and the agent-card
+ * "configured" = both filled AND committed (savedAt non-null and not invalidated
+ * by a subsequent edit). Used to drive the "configured" badge and the agent-card
  * configuration warning.
  */
 export function isProviderConfigured(c: ProviderCredentials): boolean {
@@ -214,7 +214,7 @@ export function isCustomConfigured(c: CustomCredentials): boolean {
 
 /**
  * The agent's *active* provider must be both filled AND committed.
- * 心元 has no setup flow yet so it never counts as configured.
+ * Xinyuan has no setup flow yet so it never counts as configured.
  */
 export function isModelConfigured(model: ModelConfig): boolean {
   switch (model.active) {
@@ -255,7 +255,7 @@ export interface AgentState {
  */
 // Internal name kept generic ("accelerated") because this knob now spans more
 // than just one vendor's mirror — npm via npmmirror, Homebrew via aliyun, git
-// via gitee. Surfaced to the user as "加速源".
+// via gitee. Surfaced to the user as "Mirror (faster)".
 export type MirrorSource = "official" | "accelerated";
 
 export interface InstallerSettings {
@@ -360,7 +360,7 @@ interface State {
   isBootstrapping: boolean;
   /** True while the Windows banner is running bootstrap.ps1 -InstallWslOnly. */
   wslInstalling: boolean;
-  /** Latest user-facing progress label (e.g. "正在启用 Windows 子系统功能…"),
+  /** Latest user-facing progress label (e.g. "Enabling Windows Subsystem feature…"),
    *  derived from the most recent `[claw-installer]` line during wslInstalling. */
   wslInstallStep: string | null;
   /** Last error from installWsl, if any (e.g., UAC denied). */
@@ -414,9 +414,9 @@ export const initialAgents: Record<AgentId, AgentState> = {
   openclaw: {
     id: "openclaw",
     name: "OpenClaw",
-    tagline: "本地 Agent 网关",
+    tagline: "Local agent gateway",
     description:
-      "通过本地 HTTP 网关把 Claude / Codex / Gemini 等模型接入开发工具。包含 CLI 与后台服务。",
+      "Bridges Claude / Codex / Gemini and other models into your dev tools via a local HTTP gateway. Ships CLI + background service.",
     status: "not-installed",
     version: null,
     installedAt: null,
@@ -429,9 +429,9 @@ export const initialAgents: Record<AgentId, AgentState> = {
   hermes: {
     id: "hermes",
     name: "Hermes",
-    tagline: "浏览器自动化",
+    tagline: "Browser automation",
     description:
-      "Playwright 驱动的浏览器代理，能让 Agent 真正打开网页、点按钮、抓数据。",
+      "A Playwright-driven browser agent that lets your agents actually open pages, click buttons, and scrape data.",
     status: "not-installed",
     version: null,
     installedAt: null,
@@ -516,7 +516,7 @@ export const useInstaller = create<State>((set, get) => ({
   installStartedAt: null,
   installEndedAt: null,
   // Start as "detecting" so the host-status banner shows a neutral
-  // "正在检测 WSL / 虚拟化…" state instead of nothing while bootstrap.ps1
+  // "Detecting WSL / virtualization…" state instead of nothing while bootstrap.ps1
   // -Preflight runs (a few hundred ms on Windows, instant on macOS/Linux
   // which immediately resolves to "ok").
   hostStatus: "detecting",
@@ -607,7 +607,7 @@ export const useInstaller = create<State>((set, get) => ({
               agents[aid] = {
                 ...agents[aid],
                 status: "error",
-                errorMessage: `安装无法启动：${msg}`,
+                errorMessage: `Failed to start install: ${msg}`,
                 currentStep: null,
                 currentStepDetail: null,
                 currentStepStartedAt: null,
@@ -635,7 +635,7 @@ export const useInstaller = create<State>((set, get) => ({
         agents[id] = {
           ...agents[id],
           status: "error",
-          errorMessage: "已被用户中止",
+          errorMessage: "Aborted by user",
           currentStep: null,
           currentStepDetail: null,
           currentStepStartedAt: null,
@@ -710,7 +710,7 @@ export const useInstaller = create<State>((set, get) => ({
               [id]: {
                 ...s.agents[id],
                 status: "error",
-                errorMessage: event.message ?? "卸载失败",
+                errorMessage: event.message ?? "Uninstall failed",
                 currentStep: null,
                 currentStepDetail: null,
                 currentStepStartedAt: null,
@@ -732,7 +732,7 @@ export const useInstaller = create<State>((set, get) => ({
               [id]: {
                 ...s.agents[id],
                 status: "error",
-                errorMessage: `卸载无法启动：${msg}`,
+                errorMessage: `Failed to start uninstall: ${msg}`,
                 currentStep: null,
                 currentStepDetail: null,
                 currentStepStartedAt: null,
@@ -759,7 +759,7 @@ export const useInstaller = create<State>((set, get) => ({
     void import("@/api/installer")
       .then(({ openAgentDashboard }) => openAgentDashboard(id))
       .catch((e) => {
-        get().appendLog(`[dashboard] 打开 ${id} dashboard 失败：${String(e)}`);
+        get().appendLog(`[dashboard] Failed to open ${id} dashboard: ${String(e)}`);
       })
       .finally(() => {
         set({ dashboardActionAgent: null });
@@ -844,7 +844,7 @@ export const useInstaller = create<State>((set, get) => ({
     if (!IS_TAURI_ENV) return;
     // Flip to "detecting" so the banner repaints into its loading state while
     // the (potentially multi-second) preflight is in flight. Without this the
-    // "重新检测" button looks unresponsive on Windows hosts.
+    // "Re-check" button looks unresponsive on Windows hosts.
     set({ hostStatus: "detecting" });
     const { readHostStatus } = await import("@/api/installer");
     const payload = await readHostStatus();
@@ -856,7 +856,7 @@ export const useInstaller = create<State>((set, get) => ({
     if (get().wslInstalling) return;
     set({
       wslInstalling: true,
-      wslInstallStep: "正在请求管理员权限…",
+      wslInstallStep: "Requesting administrator privileges…",
       wslInstallError: null,
       logTail: [],
       currentLogPath: null,
@@ -893,7 +893,7 @@ export const useInstaller = create<State>((set, get) => ({
         set({
           wslInstalling: false,
           wslInstallStep: null,
-          wslInstallError: event.success ? null : (event.message ?? "WSL 安装失败"),
+          wslInstallError: event.success ? null : (event.message ?? "WSL install failed"),
         });
         if (event.success) {
           // Re-check host status so the banner disappears (or transitions to
@@ -1026,7 +1026,7 @@ function handleInstallerEvent(event: InstallerEvent, queue: AgentId[]) {
           agents[id] = {
             ...agents[id],
             status: "error",
-            errorMessage: event.message ?? "安装失败",
+            errorMessage: event.message ?? "Install failed",
             currentStep: null,
             currentStepDetail: null,
             currentStepStartedAt: null,
@@ -1106,7 +1106,7 @@ function runLifecycle(
               ...agent,
               status: "error",
               errorMessage:
-                event.message ?? (action === "start" ? "启动失败" : "停止失败"),
+                event.message ?? (action === "start" ? "Failed to start" : "Failed to stop"),
               currentStep: null,
               currentStepDetail: null,
               currentStepStartedAt: null,
@@ -1131,7 +1131,7 @@ function runLifecycle(
             [id]: {
               ...cur.agents[id],
               status: "error",
-              errorMessage: `${action} 无法启动：${msg}`,
+              errorMessage: `Failed to start ${action}: ${msg}`,
               currentStep: null,
               currentStepDetail: null,
               currentStepStartedAt: null,

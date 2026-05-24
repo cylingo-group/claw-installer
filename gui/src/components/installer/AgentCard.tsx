@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { ChevronRight, LayoutDashboard, Loader2, Play, Settings, Square, Trash2 } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import {
   useInstaller,
   isAgentConfigured,
@@ -17,6 +18,7 @@ const AGENT_LOGOS: Record<AgentId, string> = {
 };
 
 export function AgentCard({ agent }: { agent: AgentState }) {
+  const { t } = useTranslation();
   const startInstall = useInstaller((s) => s.startInstall);
   const startService = useInstaller((s) => s.startService);
   const stopService = useInstaller((s) => s.stopService);
@@ -63,7 +65,7 @@ export function AgentCard({ agent }: { agent: AgentState }) {
           <div className="flex shrink-0 items-center gap-0.5">
             {agent.status === "ready" ? (
               <IconBtn
-                label={lifecycleBusy && serviceActionKind === "stop" ? "停止中…" : "停止"}
+                label={lifecycleBusy && serviceActionKind === "stop" ? t("agentCard.stopping") : t("agentCard.stop")}
                 tone="stop"
                 onClick={() => stopService(agent.id)}
                 disabled={lifecycleBusy || otherLifecycleBusy || otherTransitioning}
@@ -79,7 +81,7 @@ export function AgentCard({ agent }: { agent: AgentState }) {
               </IconBtn>
             ) : (
               <IconBtn
-                label={lifecycleBusy && serviceActionKind === "start" ? "启动中…" : "启动"}
+                label={lifecycleBusy && serviceActionKind === "start" ? t("agentCard.starting") : t("agentCard.start")}
                 tone="play"
                 onClick={() => startService(agent.id)}
                 disabled={lifecycleBusy || otherLifecycleBusy || otherTransitioning}
@@ -92,7 +94,7 @@ export function AgentCard({ agent }: { agent: AgentState }) {
               </IconBtn>
             )}
             <IconBtn
-              label={dashboardBusy ? "启动中…" : "打开 Dashboard"}
+              label={dashboardBusy ? t("agentCard.starting") : t("agentCard.openDashboard")}
               onClick={() => openDashboard(agent.id)}
               disabled={lifecycleBusy || dashboardBusy || otherDashboardBusy}
             >
@@ -102,11 +104,11 @@ export function AgentCard({ agent }: { agent: AgentState }) {
                 <LayoutDashboard className="h-4 w-4" strokeWidth={1.6} />
               )}
             </IconBtn>
-            <IconBtn label="配置" onClick={() => openSettings(agent.id)} disabled={lifecycleBusy}>
+            <IconBtn label={t("agentCard.configure")} onClick={() => openSettings(agent.id)} disabled={lifecycleBusy}>
               <Settings className="h-4 w-4" strokeWidth={1.6} />
             </IconBtn>
             <IconBtn
-              label="卸载"
+              label={t("agentCard.uninstall")}
               tone="danger"
               disabled={otherTransitioning || lifecycleBusy || otherLifecycleBusy}
               onClick={() => openUninstall(agent.id)}
@@ -128,14 +130,14 @@ export function AgentCard({ agent }: { agent: AgentState }) {
                 "disabled:cursor-not-allowed disabled:opacity-50"
               )}
             >
-              立即安装
+              {t("agentCard.install")}
             </button>
           )}
 
           {isError && (
             <div className="space-y-1.5">
               <div className="rounded bg-danger/5 px-2 py-1.5 text-[11px] text-danger leading-relaxed">
-                {agent.errorMessage ?? "安装失败"}
+                {agent.errorMessage ?? t("agentCard.installFailed")}
                 <LogPathHint />
               </div>
               <button
@@ -146,14 +148,14 @@ export function AgentCard({ agent }: { agent: AgentState }) {
                   "disabled:cursor-not-allowed disabled:opacity-50"
                 )}
               >
-                重新安装
+                {t("agentCard.reinstall")}
               </button>
             </div>
           )}
 
           {transitioning && (
             <ProgressBar
-              label={agent.status === "installing" ? "安装中…" : "卸载中…"}
+              label={agent.status === "installing" ? t("agentCard.installing") : t("agentCard.uninstalling")}
               hint={agent.status === "installing" ? "installing" : "uninstalling"}
               tone={agent.status === "installing" ? "accent" : "danger"}
               currentStep={agent.currentStep}
@@ -172,16 +174,17 @@ export function AgentCard({ agent }: { agent: AgentState }) {
 }
 
 function UnconfiguredHint({ agent, onOpen }: { agent: AgentState; onOpen: () => void }) {
+  const { t } = useTranslation();
   const modelMissing = !isModelConfigured(agent.config.model);
   const channelMissing = agent.config.channel === null;
 
   let copy: string;
   if (modelMissing && channelMissing) {
-    copy = "尚未完成模型与 IM 通道配置，立即设置";
+    copy = t("agentCard.configIncompleteAll");
   } else if (modelMissing) {
-    copy = "尚未完成模型配置，立即设置";
+    copy = t("agentCard.configIncompleteModel");
   } else {
-    copy = "尚未完成 IM 通道配置，立即设置";
+    copy = t("agentCard.configIncompleteChannel");
   }
 
   return (
@@ -239,11 +242,12 @@ function ProgressBar({
 }
 
 function LogPathHint() {
+  const { t } = useTranslation();
   const path = useInstaller((s) => s.currentLogPath);
   if (!path) return null;
   return (
-    <div className="mt-1 truncate font-mono text-[10px] text-muted" title={path} lang="en">
-      完整日志：{path}
+    <div className="mt-1 truncate font-mono text-[10px] text-muted" title={path}>
+      {t("agentCard.fullLog", { path })}
     </div>
   );
 }

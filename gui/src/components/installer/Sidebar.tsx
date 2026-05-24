@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { useInstaller, type AgentId } from "@/store/installer-store";
 import { AgentCard } from "./AgentCard";
 import { HostStatusBanner } from "./HostStatusBanner";
@@ -6,6 +7,7 @@ import { cn } from "@/lib/utils";
 import clawLogo from "@/assets/claw-installer-logo-v2.png";
 
 export function Sidebar() {
+  const { t } = useTranslation();
   const agents = useInstaller((s) => s.agents);
   const installQueue = useInstaller((s) => s.installQueue);
   const startInstall = useInstaller((s) => s.startInstall);
@@ -24,12 +26,12 @@ export function Sidebar() {
   const disabled =
     installing || uninstalling || pending.length === 0 || hostBlocked || serviceActionAgent !== null;
   const label = installing
-    ? "正在安装…"
+    ? t("sidebar.installing")
     : uninstalling
-    ? "处理中…"
+    ? t("sidebar.busy")
     : pending.length === 0
-    ? "全部已安装"
-    : "一键安装全部";
+    ? t("sidebar.allInstalled")
+    : t("sidebar.installAll");
 
   return (
     <aside className="flex h-full w-full flex-col bg-surface">
@@ -43,8 +45,8 @@ export function Sidebar() {
         </div>
         <button
           onClick={openAppSettings}
-          aria-label="应用设置"
-          title="应用设置"
+          aria-label={t("sidebar.appSettings")}
+          title={t("sidebar.appSettings")}
           className="grid h-8 w-8 shrink-0 place-items-center rounded text-muted transition-colors hover:bg-background hover:text-foreground"
         >
           <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">

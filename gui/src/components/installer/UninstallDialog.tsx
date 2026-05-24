@@ -1,6 +1,8 @@
+import { useTranslation } from "react-i18next";
 import { useInstaller } from "@/store/installer-store";
 
 export function UninstallDialog() {
+  const { t } = useTranslation();
   const target = useInstaller((s) => s.uninstallTarget);
   const agent = useInstaller((s) => (target ? s.agents[target] : null));
   const close = useInstaller((s) => s.closeUninstall);
@@ -17,20 +19,20 @@ export function UninstallDialog() {
               <path d="M4 7h16M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2M6 7l1 13a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-13" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
           </span>
-          <h2 className="text-base font-semibold">卸载 {agent.name}？</h2>
+          <h2 className="text-base font-semibold">{t("uninstall.title", { name: agent.name })}</h2>
         </div>
         <div className="mt-5 flex items-center justify-end gap-2">
           <button
             onClick={close}
             className="rounded border border-border bg-background px-3 py-1.5 text-sm text-foreground hover:border-foreground/40"
           >
-            取消
+            {t("common.cancel")}
           </button>
           <button
             onClick={confirm}
             className="rounded bg-danger px-3 py-1.5 text-sm font-medium text-white hover:opacity-90"
           >
-            确认卸载
+            {t("uninstall.confirm")}
           </button>
         </div>
       </div>
