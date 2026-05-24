@@ -37,19 +37,19 @@ pub(crate) fn apply_login_env(
 /// which produces a bare `.exe` with no installer. If the customer runs the
 /// `.exe` without extracting the full distribution zip alongside it, PowerShell
 /// gets invoked with a `-File <path>` that doesn't exist — and exits with
-/// `-196608` plus a CP936-encoded "找不到文件" on stderr that Tauri discards.
+/// `-196608` plus a CP936-encoded "file not found" on stderr that Tauri discards.
 /// The user sees only the cryptic code.
 ///
-/// We pre-check the expected layout and emit a clear Chinese error before
-/// spawning, so the GUI shows actionable text instead of an error code lottery.
+/// We pre-check the expected layout and emit a clear actionable error before
+/// spawning, so the GUI shows useful text instead of an error code lottery.
 fn check_resources(app: &tauri::AppHandle) -> Result<(), String> {
     let shell_dir = resolve_installer_dir(app);
     if !shell_dir.is_dir() {
         return Err(format!(
-            "找不到脚本目录：{}\n\
-             请确认运行的是 claw-installer-windows.zip 完整解压后的 exe，\
-             而不是单独把 exe 拎出来放到桌面。\n\
-             如果只有 exe，请重新下载发布包并整目录解压后再运行。",
+            "Shell script directory not found: {}\n\
+             Make sure you are running the .exe from the fully-extracted \
+             claw-installer-windows.zip — not a standalone .exe copied to your desktop.\n\
+             If you only have the .exe, re-download the release and extract the whole folder before running it again.",
             shell_dir.display()
         ));
     }
@@ -59,7 +59,7 @@ fn check_resources(app: &tauri::AppHandle) -> Result<(), String> {
     let sentinel = shell_dir.join("install.sh");
     if !sentinel.is_file() {
         return Err(format!(
-            "脚本完整性异常，缺少入口文件：{}\n发布包可能损坏，请重新解压。",
+            "Distribution integrity check failed: missing entry-point file: {}\nThe release package may be corrupted; please re-extract it.",
             sentinel.display()
         ));
     }
@@ -466,22 +466,22 @@ pub(crate) fn build_service_command(
 /// the log-sniff fallback only fires for code 1.
 fn format_exit_code(code: Option<i32>, recent_lines: &[String]) -> String {
     let Some(c) = code else {
-        return "脚本意外退出，没有返回退出码（可能被强制结束或进程崩溃）".to_string();
+        return "Script exited unexpectedly without an exit code (may have been killed or crashed)".to_string();
     };
     let hex = format!("0x{:08X}", c as u32);
     if let Some(h) = exit_code_hint(c) {
-        return format!("{}（退出码 {} / {}）", h, c, hex);
+        return format!("{} (exit {} / {})", h, c, hex);
     }
     if c == 1 {
         if let Some(reason) = sniff_known_reason(recent_lines) {
-            return format!("{}（退出码 {} / {}）", reason, c, hex);
+            return format!("{} (exit {} / {})", reason, c, hex);
         }
         return format!(
-            "安装中途遇到未预期的错误，请查看下方「完整日志」了解详情（退出码 {} / {}）",
+            "Unexpected error during install — see the \"Full log\" below for details (exit {} / {})",
             c, hex
         );
     }
-    format!("安装脚本以未知退出码 {} ({}) 结束", c, hex)
+    format!("Install script exited with unknown code {} ({})", c, hex)
 }
 
 /// Human hint for well-known exit codes. Includes both Windows runtime codes
@@ -492,15 +492,15 @@ fn format_exit_code(code: Option<i32>, recent_lines: &[String]) -> String {
 fn exit_code_hint(code: i32) -> Option<&'static str> {
     match code {
         // ---- bootstrap.ps1 reserved exits -----------------------------------
-        2 => Some("需要重启 Windows 后再继续安装。重启完成后请重新运行本安装器"),
+        2 => Some("A Windows reboot is required before continuing. After it reboots, please re-launch this installer"),
         3 => Some(
-            "环境检查未通过 — 可能是 Windows 版本太旧、WSL 安装失败，\
-             或启用 WSL 功能时出错。详情请查看日志",
+            "Environment check failed — Windows may be too old, WSL install may have failed, \
+             or enabling WSL features may have errored. See the log for details",
         ),
-        4 => Some("UAC 授权被拒绝或取消，安装需要管理员权限才能继续"),
+        4 => Some("UAC authorization denied or cancelled — the installer needs administrator privileges to continue"),
         5 => Some(
-            "CPU 虚拟化未在 BIOS 中开启。请重启电脑进入 BIOS / UEFI，\
-             启用 Intel VT-x 或 AMD SVM 后再运行安装",
+            "CPU virtualization is not enabled in BIOS. Reboot into BIOS / UEFI \
+             and enable Intel VT-x or AMD SVM, then re-run the installer",
         ),
         // ---- Well-known Windows runtime exits -------------------------------
         // 0xFFFD0000. Microsoft Q&A + Veeam/Nagios forums all confirm: this
@@ -509,17 +509,17 @@ fn exit_code_hint(code: i32) -> Option<&'static str> {
         // characters — PS 5.1 then decodes as system ANSI codepage and the
         // parser chokes.
         -196608 => Some(
-            "PowerShell 无法启动安装脚本 — 常见原因：脚本路径含空格，\
-             或脚本编码异常（缺少 UTF-8 BOM）",
+            "PowerShell could not start the install script — common causes: \
+             the script path contains spaces, or the script encoding is broken (missing UTF-8 BOM)",
         ),
-        -1073741510 /* 0xC000013A STATUS_CONTROL_C_EXIT */ => Some("安装进程被强制终止（Ctrl+C 或外部结束）"),
-        -1073741819 /* 0xC0000005 STATUS_ACCESS_VIOLATION */ => Some("PowerShell 宿主进程崩溃 — 请重启电脑后重试"),
+        -1073741510 /* 0xC000013A STATUS_CONTROL_C_EXIT */ => Some("Install process was forcibly terminated (Ctrl+C or external kill)"),
+        -1073741819 /* 0xC0000005 STATUS_ACCESS_VIOLATION */ => Some("PowerShell host process crashed — please reboot and retry"),
         _ => None,
     }
 }
 
 /// Scan recent log lines (newest-last) for keywords that signal a known root
-/// cause, returning a human-readable Chinese reason if one matches. Used as
+/// cause, returning a human-readable English reason if one matches. Used as
 /// a fallback when bootstrap.ps1's outer catch swallowed the real exit code
 /// (e.g. an IOException during log writes pre-empts a clean `exit 5`).
 ///
@@ -531,26 +531,26 @@ fn sniff_known_reason(lines: &[String]) -> Option<&'static str> {
         let l = line.as_str();
         if l.contains("HCS_E_HYPERV_NOT_INSTALLED")
             || l.contains("enablevirtualization")
-            || l.contains("CPU 虚拟化")
+            || l.contains("CPU virtualization")
             || l.contains("Intel VT-x")
             || l.contains("AMD SVM")
         {
             return Some(
-                "CPU 虚拟化未在 BIOS 中开启。请重启电脑进入 BIOS / UEFI，\
-                 启用 Intel VT-x 或 AMD SVM 后再运行安装",
+                "CPU virtualization is not enabled in BIOS. Reboot into BIOS / UEFI \
+                 and enable Intel VT-x or AMD SVM, then re-run the installer",
             );
         }
-        if l.contains("UAC 授权被拒绝") || l.contains("operation was canceled by the user") {
-            return Some("UAC 授权被拒绝或取消，安装需要管理员权限才能继续");
+        if l.contains("UAC authorization denied") || l.contains("operation was canceled by the user") {
+            return Some("UAC authorization denied or cancelled — the installer needs administrator privileges to continue");
         }
         if l.contains("CommandNotFoundException") && l.contains("wsl") {
             return Some(
-                "未检测到 WSL 命令 — Windows 子系统功能可能尚未启用，\
-                 请按提示重启电脑后重试",
+                "wsl command not found — the Windows Subsystem feature may not be enabled yet. \
+                 Reboot as prompted and retry",
             );
         }
         if l.contains("Windows build") && l.contains("is below 19041") {
-            return Some("Windows 版本过低，WSL 2 需要 Win10 build 19041 或更高版本");
+            return Some("Windows version is too old — WSL 2 requires Win10 build 19041 or newer");
         }
     }
     None
@@ -698,9 +698,9 @@ async fn run_event_loop(
                         mojibake_warned = true;
                         let _ = on_event.send(InstallerEvent::LogLine {
                             line: format!(
-                                "[claw-installer] ⚠ 子进程输出疑似编码不一致（出现大量 U+FFFD），\
-                                 请检查 bootstrap.ps1 中 [Console]::OutputEncoding 是否生效。\
-                                 原始行: {:?}",
+                                "[claw-installer] ⚠ Child process output appears to have an encoding mismatch \
+                                 (many U+FFFD replacement chars). Check that [Console]::OutputEncoding is taking \
+                                 effect inside bootstrap.ps1. Raw line: {:?}",
                                 line
                             ),
                         });
@@ -768,7 +768,7 @@ async fn run_event_loop(
                     Some(0) => {
                         let _ = on_event.send(InstallerEvent::StepChanged {
                             key: "done".to_string(),
-                            label: "✓ 完成".to_string(),
+                            label: "✓ Done".to_string(),
                             detail: String::new(),
                         });
                         let _ = on_event.send(InstallerEvent::Finished {
@@ -1373,7 +1373,7 @@ pub(crate) fn dispatch_op(
 
     let mut child = cmd
         .spawn()
-        .map_err(|e| format!("spawn powershell.exe 失败 (op={}/{}): {}", agent, op, e))?;
+        .map_err(|e| format!("Failed to spawn powershell.exe (op={}/{}): {}", agent, op, e))?;
 
     // We do NOT pipe stdin_bytes directly to powershell.exe — the payload
     // travels via INSTALLER_OP_STDIN_B64 env var instead (design decision D2).
@@ -1382,7 +1382,7 @@ pub(crate) fn dispatch_op(
 
     let out = child
         .wait_with_output()
-        .map_err(|e| format!("等待 powershell.exe 失败 (op={}/{}): {}", agent, op, e))?;
+        .map_err(|e| format!("Failed to wait on powershell.exe (op={}/{}): {}", agent, op, e))?;
 
     // ── Append exit-code marker + any stderr to the op session log ───
     //
@@ -1522,7 +1522,7 @@ pub(crate) fn dispatch_op(
     let t_spawn = std::time::Instant::now();
     let mut child = cmd
         .spawn()
-        .map_err(|e| format!("spawn bash claw-op.sh 失败 (op={}/{}): {}", agent, op, e))?;
+        .map_err(|e| format!("Failed to spawn bash claw-op.sh (op={}/{}): {}", agent, op, e))?;
     log_info!(
         "commands::dispatch_op",
         "op={}/{} spawn returned in {}ms pid={}",
@@ -1537,10 +1537,10 @@ pub(crate) fn dispatch_op(
         let mut stdin_pipe = child
             .stdin
             .take()
-            .ok_or_else(|| "无法获取 bash stdin 管道".to_string())?;
+            .ok_or_else(|| "Failed to acquire bash stdin pipe".to_string())?;
         stdin_pipe
             .write_all(stdin_bytes)
-            .map_err(|e| format!("写入 stdin 失败: {}", e))?;
+            .map_err(|e| format!("Failed to write stdin: {}", e))?;
         log_info!(
             "commands::dispatch_op",
             "op={}/{} stdin write ({} bytes) in {}ms",
@@ -1556,7 +1556,7 @@ pub(crate) fn dispatch_op(
     let t_wait = std::time::Instant::now();
     let out = child
         .wait_with_output()
-        .map_err(|e| format!("等待 bash claw-op.sh 失败 (op={}/{}): {}", agent, op, e))?;
+        .map_err(|e| format!("Failed to wait on bash claw-op.sh (op={}/{}): {}", agent, op, e))?;
     log_info!(
         "commands::dispatch_op",
         "op={}/{} wait_with_output {}ms (exit={:?}, stdout={}B, stderr={}B, total {}ms)",
@@ -1642,7 +1642,7 @@ pub async fn apply_openclaw_model_config(
     // only of dotted-identifier characters and must not start with '-'.
     for p in &replace_paths {
         if !is_valid_openclaw_path(p) {
-            return Err(format!("非法的 replace path: {:?}", p));
+            return Err(format!("Illegal replace path: {:?}", p));
         }
     }
 
@@ -1704,7 +1704,7 @@ pub async fn apply_hermes_model_config(
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '_')
     {
-        return Err(format!("非法的 env var 名: {}", env_var_name));
+        return Err(format!("Illegal env var name: {}", env_var_name));
     }
 
     let env_extras = [
@@ -1747,7 +1747,7 @@ pub async fn apply_hermes_model_config(
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '_')
     {
-        return Err(format!("非法的 env var 名: {}", env_var_name));
+        return Err(format!("Illegal env var name: {}", env_var_name));
     }
 
     let env_extras = [
@@ -1791,11 +1791,11 @@ pub async fn pair_bubbolink(
     // Validate code: exactly 4 ASCII digits. Mirrors the front-end gate so a
     // tampered IPC call still can't smuggle shell metacharacters in.
     if code.len() != 4 || !code.chars().all(|c| c.is_ascii_digit()) {
-        return Err(format!("配对码必须是 4 位数字（收到 {:?}）", code));
+        return Err(format!("Pairing code must be exactly 4 digits (got {:?})", code));
     }
     // Validate agent_id against the dispatch_op agent whitelist.
     if agent_id != "openclaw" && agent_id != "hermes" {
-        return Err(format!("非法的 runtime: {:?}", agent_id));
+        return Err(format!("Illegal runtime: {:?}", agent_id));
     }
 
     let env_extras = [("INSTALLER_OP_PAIR_CODE", code.as_str())];
@@ -1838,13 +1838,13 @@ fn config_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
         let base = app
             .path()
             .data_dir()
-            .map_err(|e| format!("解析 %APPDATA% 失败: {}", e))?;
+            .map_err(|e| format!("Failed to resolve %APPDATA%: {}", e))?;
         base.join("claw-installer")
     };
 
     if !dir.exists() {
         fs::create_dir_all(&dir)
-            .map_err(|e| format!("创建配置目录失败 {}: {}", dir.display(), e))?;
+            .map_err(|e| format!("Failed to create config dir {}: {}", dir.display(), e))?;
     }
     Ok(dir)
 }
@@ -1871,7 +1871,7 @@ fn migrate_legacy_config(app: &tauri::AppHandle, new_path: &std::path::Path) {
         if let Err(e) = fs::create_dir_all(parent) {
             log_error!(
                 "commands::migrate_legacy_config",
-                "创建目标目录失败 {}: {}",
+                "Failed to create destination dir {}: {}",
                 parent.display(),
                 e
             );
@@ -1883,7 +1883,7 @@ fn migrate_legacy_config(app: &tauri::AppHandle, new_path: &std::path::Path) {
         if let Err(e) = fs::copy(&legacy, new_path) {
             log_error!(
                 "commands::migrate_legacy_config",
-                "复制失败 {} → {}: {}",
+                "Copy failed {} → {}: {}",
                 legacy.display(),
                 new_path.display(),
                 e
@@ -1893,7 +1893,7 @@ fn migrate_legacy_config(app: &tauri::AppHandle, new_path: &std::path::Path) {
         if let Err(e) = fs::remove_file(&legacy) {
             log_info!(
                 "commands::migrate_legacy_config",
-                "已复制但删除原文件失败 {}: {}",
+                "Copied but failed to remove the original {}: {}",
                 legacy.display(),
                 e
             );
@@ -1901,7 +1901,7 @@ fn migrate_legacy_config(app: &tauri::AppHandle, new_path: &std::path::Path) {
     }
     log_info!(
         "commands::migrate_legacy_config",
-        "已迁移旧 model-config.json → {}",
+        "Migrated legacy model-config.json → {}",
         new_path.display()
     );
 }
@@ -1915,11 +1915,11 @@ pub async fn read_model_configs(
     match fs::read_to_string(&path) {
         Ok(text) => {
             let v: serde_json::Value = serde_json::from_str(&text)
-                .map_err(|e| format!("解析 {} 失败: {}", path.display(), e))?;
+                .map_err(|e| format!("Failed to parse {}: {}", path.display(), e))?;
             Ok(Some(v))
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(e) => Err(format!("读取 {} 失败: {}", path.display(), e)),
+        Err(e) => Err(format!("Failed to read {}: {}", path.display(), e)),
     }
 }
 
@@ -1930,15 +1930,15 @@ pub async fn write_model_configs(
 ) -> Result<(), String> {
     let path = config_path(&app)?;
     let body = serde_json::to_vec_pretty(&payload)
-        .map_err(|e| format!("序列化 config 失败: {}", e))?;
+        .map_err(|e| format!("Failed to serialize config: {}", e))?;
 
     // Atomic-ish: write to a sibling temp file with mode 0600 then rename.
     let parent = path.parent().unwrap_or_else(|| std::path::Path::new("."));
     let tmp = parent.join(format!(".config.tmp.{}", std::process::id()));
     write_secret_file(&tmp, &body)
-        .map_err(|e| format!("写入 {} 失败: {}", tmp.display(), e))?;
+        .map_err(|e| format!("Failed to write {}: {}", tmp.display(), e))?;
     fs::rename(&tmp, &path)
-        .map_err(|e| format!("重命名到 {} 失败: {}", path.display(), e))?;
+        .map_err(|e| format!("Failed to rename to {}: {}", path.display(), e))?;
     Ok(())
 }
 
@@ -1984,9 +1984,9 @@ fn format_cli_failure(
         .map(|c| c.to_string())
         .unwrap_or_else(|| "signal".to_string());
     if body.is_empty() {
-        format!("{} 失败 (exit={})", label, code_str)
+        format!("{} failed (exit={})", label, code_str)
     } else {
-        format!("{} 失败 (exit={}):\n{}", label, code_str, body.trim_end())
+        format!("{} failed (exit={}):\n{}", label, code_str, body.trim_end())
     }
 }
 
@@ -2045,11 +2045,11 @@ mod tests {
         // The reason should lead the message, not the raw code — users shouldn't
         // have to decode a hex number to know what to do next.
         let s5 = format_exit_code(Some(5), &[]);
-        assert!(s5.contains("CPU 虚拟化"), "got {s5:?}");
+        assert!(s5.contains("CPU virtualization"), "got {s5:?}");
         assert!(s5.starts_with("CPU"), "reason should lead: got {s5:?}");
 
         let s2 = format_exit_code(Some(2), &[]);
-        assert!(s2.contains("重启"), "got {s2:?}");
+        assert!(s2.contains("reboot"), "got {s2:?}");
 
         let s4 = format_exit_code(Some(4), &[]);
         assert!(s4.contains("UAC"), "got {s4:?}");
@@ -2058,39 +2058,40 @@ mod tests {
     #[test]
     fn format_exit_code_one_is_plain_language_not_jargon() {
         // The user complaint that drove this rewrite: exit 1 must not show
-        // "脚本异常终止（未预期的 PowerShell 错误）。请检查会话日志末尾的
-        // Exception type / Script location / Stack trace". A non-engineer
-        // can't act on that. We replace it with a sentence and a pointer.
+        // "Script terminated abnormally (unexpected PowerShell error). Check
+        // Exception type / Script location / Stack trace at the end of the
+        // session log." A non-engineer can't act on that. We replace it with
+        // a sentence and a pointer.
         let s = format_exit_code(Some(1), &[]);
         assert!(!s.contains("Exception type"), "got {s:?}");
         assert!(!s.contains("Stack trace"), "got {s:?}");
-        assert!(!s.contains("脚本异常终止"), "got {s:?}");
-        assert!(s.contains("完整日志") || s.contains("日志"), "got {s:?}");
+        assert!(!s.contains("abnormally"), "got {s:?}");
+        assert!(s.contains("Full log") || s.contains("log"), "got {s:?}");
     }
 
     #[test]
     fn format_exit_code_one_sniffs_log_for_root_cause() {
         // When the script's outer catch swallowed the real exit code (e.g.
         // an IOException during log writes pre-empted exit 5), we should
-        // still surface "CPU 虚拟化" to the user if the log shows it.
+        // still surface "CPU virtualization" to the user if the log shows it.
         let log = vec![
             "[claw-installer] claw-installer Windows bootstrap (...)".to_string(),
             "[claw-installer] Windows build: 26200".to_string(),
-            "wsl --install -d Ubuntu stdout: WSL2 无法启动...".to_string(),
-            "错误代码: Wsl/InstallDistro/Service/RegisterDistro/CreateVm/HCS/HCS_E_HYPERV_NOT_INSTALLED"
+            "wsl --install -d Ubuntu stdout: WSL2 failed to start...".to_string(),
+            "Error code: Wsl/InstallDistro/Service/RegisterDistro/CreateVm/HCS/HCS_E_HYPERV_NOT_INSTALLED"
                 .to_string(),
-            "[claw-installer] wsl --install -d Ubuntu 失败 (exit -1)".to_string(),
+            "[claw-installer] wsl --install -d Ubuntu failed (exit -1)".to_string(),
         ];
         let s = format_exit_code(Some(1), &log);
-        assert!(s.contains("CPU 虚拟化") || s.contains("BIOS"), "got {s:?}");
-        assert!(s.contains("退出码 1"), "got {s:?}");
+        assert!(s.contains("CPU virtualization") || s.contains("BIOS"), "got {s:?}");
+        assert!(s.contains("exit 1"), "got {s:?}");
     }
 
     #[test]
     fn format_exit_code_one_sniffs_log_for_uac_denial() {
         let log = vec![
-            "需要管理员权限，正在请求 UAC 授权…".to_string(),
-            "[claw-installer] UAC 授权被拒绝或取消：xxx".to_string(),
+            "Administrator privileges required — requesting UAC authorization…".to_string(),
+            "[claw-installer] UAC authorization denied or cancelled: xxx".to_string(),
         ];
         let s = format_exit_code(Some(1), &log);
         assert!(s.contains("UAC"), "got {s:?}");
@@ -2099,9 +2100,9 @@ mod tests {
     #[test]
     fn sniff_returns_none_for_unrelated_lines() {
         let log = vec![
-            "正在下载依赖".to_string(),
-            "安装 npm 包".to_string(),
-            "完成".to_string(),
+            "Downloading dependencies".to_string(),
+            "Installing npm package".to_string(),
+            "Done".to_string(),
         ];
         assert!(sniff_known_reason(&log).is_none());
     }
@@ -2113,7 +2114,7 @@ mod tests {
         assert!(s.contains("0xFFFD0000"), "got {s:?}");
         // Hint should mention either of the two known triggers.
         assert!(
-            s.contains("空格") || s.contains("BOM"),
+            s.contains("spaces") || s.contains("BOM"),
             "got {s:?}"
         );
     }
@@ -2156,7 +2157,7 @@ mod tests {
 
     #[test]
     fn mojibake_clean_line_not_flagged() {
-        assert!(!line_looks_like_mojibake("正在安装 OpenClaw…"));
+        assert!(!line_looks_like_mojibake("Installing OpenClaw…"));
         assert!(!line_looks_like_mojibake("+ pnpm add -g openclaw@latest"));
         assert!(!line_looks_like_mojibake(""));
     }
@@ -2200,7 +2201,7 @@ mod tests {
     #[test]
     fn format_exit_code_handles_no_code() {
         let s = format_exit_code(None, &[]);
-        assert!(s.contains("信号") || s.contains("崩溃"), "got {s:?}");
+        assert!(s.contains("killed") || s.contains("crashed"), "got {s:?}");
     }
 
     #[test]

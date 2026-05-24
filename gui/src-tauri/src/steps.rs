@@ -40,19 +40,19 @@ pub fn parse_step_sentinel(line: &str) -> Option<(String, String)> {
 #[allow(dead_code)]
 pub fn step_label(key: &str) -> (String, &'static str) {
     match key {
-        "base-deps"    => ("正在安装系统依赖…".into(),    "curl / git / openssl / unzip"),
-        "system-tools" => ("正在安装系统工具…".into(),    "ripgrep / ffmpeg / build 工具链"),
-        "fnm"          => ("正在安装 fnm…".into(),         "Node 版本管理器"),
-        "node"         => ("正在配置 Node 运行时…".into(), "Node v24 via fnm"),
-        "hermes-node"  => ("正在配置 Hermes Node…".into(), "Node v22 for Hermes"),
-        "uv"           => ("正在安装 uv…".into(),           "Python 包管理器"),
-        "python"       => ("正在安装 Python…".into(),       "Python 3.11 via uv"),
-        "pnpm"         => ("正在准备 pnpm…".into(),         "via corepack"),
-        "npmrc"        => ("正在写入镜像源…".into(),        "~/.npmrc"),
-        "shell-rc"     => ("正在配置 Shell 环境…".into(),   "~/.bashrc / ~/.zshrc"),
-        "openclaw"     => ("正在安装 OpenClaw…".into(),     "pnpm add -g openclaw"),
-        "hermes"       => ("正在安装 Hermes…".into(),       "克隆代码仓库 + 上游安装脚本"),
-        "done"         => ("✓ 完成".into(),                 ""),
+        "base-deps"    => ("Installing base dependencies…".into(), "curl / git / openssl / unzip"),
+        "system-tools" => ("Installing system tools…".into(),      "ripgrep / ffmpeg / build chain"),
+        "fnm"          => ("Installing fnm…".into(),               "Node version manager"),
+        "node"         => ("Configuring Node runtime…".into(),     "Node v24 via fnm"),
+        "hermes-node"  => ("Configuring Hermes Node…".into(),      "Node v22 for Hermes"),
+        "uv"           => ("Installing uv…".into(),                "Python package manager"),
+        "python"       => ("Installing Python…".into(),            "Python 3.11 via uv"),
+        "pnpm"         => ("Preparing pnpm…".into(),               "via corepack"),
+        "npmrc"        => ("Writing npm registry mirror…".into(),  "~/.npmrc"),
+        "shell-rc"     => ("Configuring shell PATH…".into(),       "~/.bashrc / ~/.zshrc"),
+        "openclaw"     => ("Installing OpenClaw…".into(),          "pnpm add -g openclaw"),
+        "hermes"       => ("Installing Hermes…".into(),            "clone repo + upstream installer"),
+        "done"         => ("✓ Done".into(),                        ""),
         other          => (other.to_string(), ""),
     }
 }
@@ -67,52 +67,52 @@ mod tests {
 
     #[test]
     fn sentinel_matches_base_deps() {
-        let line = "@@step:base-deps:正在安装系统依赖…";
+        let line = "@@step:base-deps:Installing base dependencies…";
         let result = parse_step_sentinel(line);
         assert!(result.is_some());
         let (key, label) = result.unwrap();
         assert_eq!(key, "base-deps");
-        assert_eq!(label, "正在安装系统依赖…");
+        assert_eq!(label, "Installing base dependencies…");
     }
 
     #[test]
     fn sentinel_matches_node() {
-        let line = "@@step:node:正在配置 Node 24 运行时…";
+        let line = "@@step:node:Configuring Node 24 runtime…";
         let (key, label) = parse_step_sentinel(line).expect("should match");
         assert_eq!(key, "node");
-        assert_eq!(label, "正在配置 Node 24 运行时…");
+        assert_eq!(label, "Configuring Node 24 runtime…");
     }
 
     #[test]
     fn sentinel_matches_pnpm() {
-        let line = "@@step:pnpm:正在准备 pnpm 包管理器…";
+        let line = "@@step:pnpm:Preparing the pnpm package manager…";
         let (key, label) = parse_step_sentinel(line).expect("should match");
         assert_eq!(key, "pnpm");
-        assert_eq!(label, "正在准备 pnpm 包管理器…");
+        assert_eq!(label, "Preparing the pnpm package manager…");
     }
 
     #[test]
     fn sentinel_matches_openclaw_pkg() {
-        let line = "@@step:openclaw-pkg:正在安装 OpenClaw 软件包…";
+        let line = "@@step:openclaw-pkg:Installing OpenClaw package…";
         let (key, label) = parse_step_sentinel(line).expect("should match");
         assert_eq!(key, "openclaw-pkg");
-        assert_eq!(label, "正在安装 OpenClaw 软件包…");
+        assert_eq!(label, "Installing OpenClaw package…");
     }
 
     #[test]
     fn sentinel_matches_hermes_upstream() {
-        let line = "@@step:hermes-upstream:正在运行 Hermes 上游安装脚本（首次约 2-5 分钟）…";
+        let line = "@@step:hermes-upstream:Running upstream Hermes installer (2–5 min on first run)…";
         let (key, label) = parse_step_sentinel(line).expect("should match");
         assert_eq!(key, "hermes-upstream");
-        assert_eq!(label, "正在运行 Hermes 上游安装脚本（首次约 2-5 分钟）…");
+        assert_eq!(label, "Running upstream Hermes installer (2–5 min on first run)…");
     }
 
     #[test]
     fn sentinel_matches_detect_platform() {
-        let line = "@@step:detect-platform:正在检测系统平台…";
+        let line = "@@step:detect-platform:Detecting system platform…";
         let (key, label) = parse_step_sentinel(line).expect("should match");
         assert_eq!(key, "detect-platform");
-        assert_eq!(label, "正在检测系统平台…");
+        assert_eq!(label, "Detecting system platform…");
     }
 
     #[test]
@@ -120,9 +120,9 @@ mod tests {
         // The label in the sentinel is authoritative; step_label() must NOT be
         // called to override it. This test verifies the sentinel returns the
         // label exactly as emitted by the script.
-        let line = "@@step:node:正在配置 Node 运行时（来自脚本）";
+        let line = "@@step:node:Configuring Node runtime (from script)";
         let (_, label) = parse_step_sentinel(line).expect("should match");
-        assert_eq!(label, "正在配置 Node 运行时（来自脚本）");
+        assert_eq!(label, "Configuring Node runtime (from script)");
         // The step_label lookup would return a different string:
         let (lookup_label, _) = step_label("node");
         assert_ne!(label, lookup_label); // they differ — script label wins
@@ -130,7 +130,7 @@ mod tests {
 
     #[test]
     fn sentinel_does_not_match_plain_line() {
-        assert!(parse_step_sentinel("正在安装系统依赖…").is_none());
+        assert!(parse_step_sentinel("Installing base dependencies…").is_none());
     }
 
     #[test]
@@ -163,7 +163,7 @@ mod tests {
     #[test]
     fn sentinel_handles_leading_whitespace() {
         // trim() is applied before regex match
-        let line = "  @@step:fnm:正在安装 fnm…";
+        let line = "  @@step:fnm:Installing fnm…";
         let result = parse_step_sentinel(line);
         assert!(result.is_some());
         let (key, _) = result.unwrap();
@@ -173,10 +173,10 @@ mod tests {
     #[test]
     fn sentinel_label_may_contain_colons() {
         // Label part is (.+) which matches colons — only first two colons are split
-        let line = "@@step:start:正在初始化：准备环境";
+        let line = "@@step:start:Initializing: preparing environment";
         let (key, label) = parse_step_sentinel(line).expect("should match");
         assert_eq!(key, "start");
-        assert_eq!(label, "正在初始化：准备环境");
+        assert_eq!(label, "Initializing: preparing environment");
     }
 
     // =========================================================================
@@ -186,14 +186,14 @@ mod tests {
     #[test]
     fn step_label_base_deps() {
         let (label, detail) = step_label("base-deps");
-        assert_eq!(label, "正在安装系统依赖…");
+        assert_eq!(label, "Installing base dependencies…");
         assert!(!detail.is_empty());
     }
 
     #[test]
     fn step_label_system_tools() {
         let (label, _) = step_label("system-tools");
-        assert_eq!(label, "正在安装系统工具…");
+        assert_eq!(label, "Installing system tools…");
     }
 
     #[test]
@@ -217,13 +217,13 @@ mod tests {
     #[test]
     fn step_label_npmrc() {
         let (label, _) = step_label("npmrc");
-        assert!(label.contains("镜像源"));
+        assert!(label.contains("registry"));
     }
 
     #[test]
     fn step_label_shell_rc() {
         let (label, _) = step_label("shell-rc");
-        assert!(label.contains("Shell"));
+        assert!(label.contains("shell"));
     }
 
     #[test]
@@ -241,7 +241,7 @@ mod tests {
     #[test]
     fn step_label_done() {
         let (label, detail) = step_label("done");
-        assert!(label.contains("完成"));
+        assert!(label.contains("Done"));
         assert_eq!(detail, "");
     }
 

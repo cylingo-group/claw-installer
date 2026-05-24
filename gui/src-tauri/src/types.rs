@@ -83,7 +83,7 @@ mod tests {
     fn step_changed_round_trips() {
         let event = InstallerEvent::StepChanged {
             key: "base-deps".to_string(),
-            label: "正在安装系统依赖…".to_string(),
+            label: "Installing base dependencies…".to_string(),
             detail: String::new(),
         };
         let json = serde_json::to_string(&event).expect("serialize");
@@ -92,7 +92,7 @@ mod tests {
         match back {
             InstallerEvent::StepChanged { key, label, .. } => {
                 assert_eq!(key, "base-deps");
-                assert_eq!(label, "正在安装系统依赖…");
+                assert_eq!(label, "Installing base dependencies…");
             }
             other => panic!("unexpected variant: {other:?}"),
         }

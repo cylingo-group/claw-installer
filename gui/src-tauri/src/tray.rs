@@ -224,7 +224,7 @@ fn run_tray_service_action(app: &AppHandle, action: &str) {
             .notification()
             .builder()
             .title("Claw Installer")
-            .body("未检测到已安装的 Agent")
+            .body("No installed agents detected")
             .show();
         return;
     }
@@ -273,12 +273,14 @@ fn run_tray_service_action(app: &AppHandle, action: &str) {
         }
     }
 
-    let action_label = if action == "start" { "启动" } else { "停止" };
+    let action_label = if action == "start" { "started" } else { "stopped" };
     let body = if failures.is_empty() {
-        format!("所有 Agent 已{action_label}")
+        format!("All agents {action_label}")
     } else {
         format!(
-            "部分 Agent {action_label}失败：{}",
+            "Some agents failed to {} ({}): {}",
+            action,
+            action_label,
             failures.join(", ")
         )
     };

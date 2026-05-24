@@ -54,7 +54,7 @@ pub async fn open_agent_dashboard(app: AppHandle, agent_id: String) -> Result<()
     match agent_id.as_str() {
         "openclaw" => open_openclaw_dashboard(app),
         "hermes" => open_hermes_dashboard(&app).await,
-        other => Err(format!("未知 agent：{other}")),
+        other => Err(format!("Unknown agent: {other}")),
     }
 }
 
@@ -88,7 +88,7 @@ fn open_openclaw_dashboard(app: AppHandle) -> Result<(), String> {
             return app
                 .opener()
                 .open_url(&cached, None::<&str>)
-                .map_err(|e| format!("无法在浏览器中打开 {cached}：{e}"));
+                .map_err(|e| format!("Failed to open {cached} in browser: {e}"));
         }
     }
 
@@ -100,7 +100,7 @@ fn open_openclaw_dashboard(app: AppHandle) -> Result<(), String> {
     // file-tail bridge in bootstrap.ps1 forwards bash stdout across the UAC
     // boundary into the powershell.exe parent's captured stdout).
     let stdout = dispatch_op(&app, "openclaw", "open-dashboard", b"", &[])
-        .map_err(|e| format!("无法打开 OpenClaw Dashboard：{e}"))?;
+        .map_err(|e| format!("Failed to open OpenClaw Dashboard: {e}"))?;
 
     let url = stdout
         .lines()
@@ -116,7 +116,7 @@ fn open_openclaw_dashboard(app: AppHandle) -> Result<(), String> {
             );
             app.opener()
                 .open_url(&url, None::<&str>)
-                .map_err(|e| format!("无法在浏览器中打开 {url}：{e}"))?;
+                .map_err(|e| format!("Failed to open {url} in browser: {e}"))?;
             // Cache for subsequent clicks in this GUI session — the fast
             // path at the top of this function will skip running openclaw
             // again, preserving any tabs the user has open against the
@@ -133,7 +133,7 @@ fn open_openclaw_dashboard(app: AppHandle) -> Result<(), String> {
                 "openclaw produced no parseable Dashboard URL; see op log"
             );
             return Err(
-                "openclaw 没有返回 Dashboard URL — 请查看 op-openclaw-open-dashboard-*.log"
+                "openclaw did not return a Dashboard URL — check op-openclaw-open-dashboard-*.log"
                     .to_string(),
             );
         }
@@ -178,7 +178,7 @@ async fn open_hermes_dashboard(app: &AppHandle) -> Result<(), String> {
         log_info!("dashboard::open_hermes_dashboard", "opening {} via Tauri opener", url);
         app.opener()
             .open_url(&url, None::<&str>)
-            .map_err(|e| format!("无法在浏览器中打开 {url}：{e}"))
+            .map_err(|e| format!("Failed to open {url} in browser: {e}"))
     };
 
     if is_listening(port) {
@@ -192,7 +192,7 @@ async fn open_hermes_dashboard(app: &AppHandle) -> Result<(), String> {
     // can surface the WSL-side spawn log location if polling times out.
     log_info!("dashboard::open_hermes_dashboard", "port {} not listening; spawning hermes dashboard", port);
     let spawn_stdout = dispatch_op(app, "hermes", "open-dashboard", b"", &[])
-        .map_err(|e| format!("无法启动 Hermes Dashboard：{e}"))?;
+        .map_err(|e| format!("Failed to start Hermes Dashboard: {e}"))?;
 
     let spawn_log = spawn_stdout
         .lines()
@@ -228,8 +228,8 @@ async fn open_hermes_dashboard(app: &AppHandle) -> Result<(), String> {
     }
 
     let hint = spawn_log
-        .map(|p| format!("查看 hermes 启动日志：wsl -- cat {p}"))
-        .unwrap_or_else(|| "在终端运行 `hermes dashboard` 查看构建日志".to_string());
+        .map(|p| format!("Check the hermes spawn log: wsl -- cat {p}"))
+        .unwrap_or_else(|| "Run `hermes dashboard` in a terminal to see build logs".to_string());
     log_error!(
         "dashboard::open_hermes_dashboard",
         "timeout: port {} never came up in 60s; {}",
@@ -237,7 +237,7 @@ async fn open_hermes_dashboard(app: &AppHandle) -> Result<(), String> {
         hint
     );
     Err(format!(
-        "Hermes Dashboard 在 60 秒内仍未就绪（端口 {port}）。\n{hint}"
+        "Hermes Dashboard did not become ready within 60 s (port {port}).\n{hint}"
     ))
 }
 
