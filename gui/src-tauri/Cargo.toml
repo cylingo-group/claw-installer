@@ -1,9 +1,13 @@
 [package]
 name = "claw-gui"
 version = "1.0.0"
-description = "Claw Installer — desktop GUI for OpenClaw and Hermes agents"
-authors = ["Claw Installer Team"]
+description = "Claw Installer — one-click desktop installer for OpenClaw and Hermes AI agents, by Cylingo Group."
+authors = ["Cylingo Group <opensource@cylingo.com>"]
 edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/cylingo-group/claw-installer"
+homepage = "https://bubbolink.com"
+readme = "../../README.md"
 
 [lib]
 # The `_lib` suffix may seem redundant but it is necessary

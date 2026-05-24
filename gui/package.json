@@ -3,6 +3,15 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
+  "description": "Tauri-based desktop GUI for claw-installer — drives the shell pipeline that provisions OpenClaw and Hermes agents.",
+  "license": "Apache-2.0",
+  "author": "Cylingo Group <opensource@cylingo.com>",
+  "homepage": "https://bubbolink.com",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/cylingo-group/claw-installer.git",
+    "directory": "gui"
+  },
   "packageManager": "pnpm@11.1.2",
   "engines": {
     "node": ">=20"

@@ -1,6 +1,15 @@
 {
   "name": "claw-installer-workspace",
+  "version": "1.0.0",
   "private": true,
+  "description": "One-click desktop installer for OpenClaw and Hermes AI agents, by Cylingo Group.",
+  "license": "Apache-2.0",
+  "author": "Cylingo Group <opensource@cylingo.com>",
+  "homepage": "https://bubbolink.com",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/cylingo-group/claw-installer.git"
+  },
   "scripts": {
     "dev:gui":   "pnpm --filter gui tauri dev",
     "build:gui": "pnpm --filter gui tauri build"
