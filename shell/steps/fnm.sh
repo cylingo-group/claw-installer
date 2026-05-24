@@ -8,15 +8,15 @@ __STEP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$__STEP_DIR/../lib/common.sh"
 
 step_fnm() {
-  display "@@step:fnm:正在安装 fnm（Node 版本管理器）…"
+  display "@@step:fnm:Installing fnm (Node version manager)…"
   local fnm_status="installed"
   if command -v fnm >/dev/null 2>&1; then
     log "fnm already on PATH: $(fnm --version)"
     fnm_status="preexisting"
-    display "fnm 已就绪：$(fnm --version)"
+    display "fnm is ready: $(fnm --version)"
   else
     local installer="$CLAW_INSTALLER_ROOT/vendor/fnm/install.sh"
-    [[ -f "$installer" ]] || die_step "安装 fnm" "Missing vendored fnm installer at $installer" 1
+    [[ -f "$installer" ]] || die_step "Install fnm" "Missing vendored fnm installer at $installer" 1
     log "Installing fnm via vendored installer (skip-shell)"
     run bash "$installer" --skip-shell
   fi
@@ -25,7 +25,7 @@ step_fnm() {
   # PATH ordering owned by _claw_compose_path in common.sh — re-assert now
   # that FNM_DIR is exported so it shows up in the canonical slot.
   _claw_compose_path
-  command -v fnm >/dev/null 2>&1 || die_step "安装 fnm" "fnm still not on PATH after install (looked in $FNM_DIR)" 1
+  command -v fnm >/dev/null 2>&1 || die_step "Install fnm" "fnm still not on PATH after install (looked in $FNM_DIR)" 1
   # Activate fnm in this shell. This adds $FNM_MULTISHELL_PATH/bin to PATH
   # and defines the `fnm` shell function (used by `fnm use`).
   eval "$(fnm env --shell bash)"

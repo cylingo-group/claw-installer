@@ -8,9 +8,9 @@ __STEP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$__STEP_DIR/../lib/common.sh"
 
 step_npmrc() {
-  display "@@step:npmrc:正在写入 npm 镜像源配置…"
+  display "@@step:npmrc:Writing npm registry mirror config…"
   if [[ -n "${INSTALLER_SKIP_USER_NPMRC:-}" ]]; then
-    display "跳过 ~/.npmrc 更新（INSTALLER_SKIP_USER_NPMRC 已设置）"
+    display "Skipping ~/.npmrc update (INSTALLER_SKIP_USER_NPMRC is set)"
     return
   fi
   local rc="$HOME/.npmrc"
@@ -24,7 +24,7 @@ step_npmrc() {
         in_blk && $0 == r { ok=1 }
         END { exit ok ? 0 : 1 }
       ' "$rc"; then
-    display "~/.npmrc 镜像源配置已是最新，跳过"
+    display "~/.npmrc mirror config is up-to-date; skipping"
     manifest_record npmrc_block "$rc" preexisting "registry=$NPM_REGISTRY"
     return
   fi
@@ -46,7 +46,7 @@ step_npmrc() {
   } >> "$tmp"
   log "Updated $rc → registry=$NPM_REGISTRY (managed block)"
   mv "$tmp" "$rc"
-  display "✓ ~/.npmrc 镜像源已更新：$NPM_REGISTRY"
+  display "✓ ~/.npmrc mirror updated: $NPM_REGISTRY"
   manifest_record npmrc_block "$rc" inserted "registry=$NPM_REGISTRY"
 }
 

@@ -45,9 +45,9 @@ GATEWAY_TOKEN="${INSTALLER_GATEWAY_TOKEN:-}"
 DEBUG_MODE="${DEBUG_MODE:-0}"
 
 install_openclaw_package() {
-  display "@@step:openclaw-pkg:正在安装 OpenClaw 软件包…"
+  display "@@step:openclaw-pkg:Installing OpenClaw package…"
   if command -v openclaw >/dev/null 2>&1 && [[ -z "${INSTALLER_FORCE_REINSTALL:-}" ]]; then
-    display "OpenClaw 已安装，跳过（版本 $(openclaw --version 2>/dev/null || echo unknown)）"
+    display "OpenClaw is already installed; skipping (version $(openclaw --version 2>/dev/null || echo unknown))"
     manifest_record pnpm_global_pkg openclaw preexisting
     return
   fi
@@ -58,13 +58,13 @@ install_openclaw_package() {
   run pnpm add -g openclaw@latest </dev/null
   hash -r 2>/dev/null || true
   command -v openclaw >/dev/null 2>&1 \
-    || die_step "安装 OpenClaw 软件包" "openclaw not on PATH after install (PNPM_HOME=${PNPM_HOME:-unset})" 1
-  display "✓ OpenClaw 已安装：$(command -v openclaw)"
+    || die_step "Install OpenClaw package" "openclaw not on PATH after install (PNPM_HOME=${PNPM_HOME:-unset})" 1
+  display "✓ OpenClaw installed: $(command -v openclaw)"
   manifest_record pnpm_global_pkg openclaw installed
 }
 
 write_openclaw_config() {
-  display "@@step:openclaw-config:正在写入 OpenClaw 配置…"
+  display "@@step:openclaw-config:Writing OpenClaw config…"
   # If a token already lives in the existing config and the caller didn't
   # supply one via INSTALLER_GATEWAY_TOKEN, reuse it. Otherwise re-runs would
   # mint a fresh token every time and silently invalidate any client that
@@ -125,13 +125,13 @@ write_openclaw_config() {
   cfg_file="$(openclaw config file 2>/dev/null || echo "$HOME/.openclaw/openclaw.json")"
   log "Config file: $cfg_file"
   manifest_record openclaw_config_file "$cfg_file" written
-  display "✓ OpenClaw 配置已写入"
+  display "✓ OpenClaw config written"
 }
 
 start_openclaw_service() {
   case "$SERVICE_MODE" in
     daemon)
-      display "@@step:openclaw-service:正在启动 OpenClaw 网关服务…"
+      display "@@step:openclaw-service:Starting OpenClaw gateway service…"
       # All `openclaw` calls below close stdin (</dev/null) so they never block
       # on an interactive prompt, and run under a wall-clock timeout so a
       # crashed daemon can't deadlock the installer waiting for "ready".
@@ -145,7 +145,7 @@ start_openclaw_service() {
         log "Gateway already running — skipping install/repair/start (set INSTALLER_FORCE_REINSTALL=1 to redo)"
         manifest_record openclaw_service gateway preexisting
         log "$status_out"
-        display "✓ OpenClaw 网关服务已在运行"
+        display "✓ OpenClaw gateway service is already running"
         run run_with_timeout 60 openclaw doctor </dev/null || true
         _print_openclaw_summary
         return
@@ -169,9 +169,9 @@ start_openclaw_service() {
       if run run_with_timeout 60 openclaw gateway start </dev/null; then
         sleep 2
         run openclaw gateway status </dev/null || true
-        display "✓ OpenClaw 网关服务已启动"
+        display "✓ OpenClaw gateway service started"
       else
-        display "⚠ 网关启动超时或失败，请运行 openclaw doctor 排查"
+        display "⚠ Gateway start timed out or failed — run 'openclaw doctor' to triage"
         log "openclaw gateway start did not complete within 60s."
         log "  This usually means the daemon crashed on startup (service loaded but not running)."
         log "  Quick triage:"
@@ -194,13 +194,13 @@ start_openclaw_service() {
       _print_openclaw_summary
       ;;
     *)
-      die_step "启动 OpenClaw 服务" "Unknown INSTALLER_SERVICE_MODE: $SERVICE_MODE (use daemon|foreground|skip)" 1
+      die_step "Start OpenClaw service" "Unknown INSTALLER_SERVICE_MODE: $SERVICE_MODE (use daemon|foreground|skip)" 1
       ;;
   esac
 }
 
 _print_openclaw_summary() {
-  display "✓ OpenClaw 安装完成"
+  display "✓ OpenClaw install complete"
   log "Gateway URL    : http://127.0.0.1:$GATEWAY_PORT"
   log "Gateway Bind   : $GATEWAY_BIND"
   log "Gateway Token  : $GATEWAY_TOKEN"
@@ -208,14 +208,14 @@ _print_openclaw_summary() {
   log "Service Mode   : $SERVICE_MODE"
   log "npm registry   : $NPM_REGISTRY"
   log ""
-  log "常用命令:"
+  log "Common commands:"
   log "  openclaw gateway status"
   log "  openclaw gateway logs"
   log "  openclaw doctor"
   log "  openclaw config get gateway.auth.token"
   log ""
-  log "⚠  Gateway Token 只完整打印一次，请妥善保存。"
-  log "⚠  ~/.npmrc 已写入镜像配置（sentinel 块），如需还原请手动删除该块。"
+  log "⚠  Gateway Token is printed in full only once — store it safely."
+  log "⚠  ~/.npmrc was patched with a managed mirror block; remove that block manually to revert."
 }
 
 # Drain any pending device-pairing requests that the gateway has queued so
@@ -234,16 +234,16 @@ warmup_openclaw_pairing() {
     log "warmup_openclaw_pairing: SERVICE_MODE=$SERVICE_MODE — skipping (gateway not running as daemon)"
     return 0
   fi
-  display "@@step:openclaw-warmup:正在预批 openclaw CLI 凭证…"
+  display "@@step:openclaw-warmup:Pre-approving openclaw CLI credentials…"
   # Run with a tight budget; if nothing's pending, exit clean (not fail).
   if INSTALLER_APPROVE_MAX_ITERATIONS=10 \
      INSTALLER_APPROVE_NEVER_FOUND_OK=1 \
      bash "$__OC_DIR/approve-latest-device.sh" 2>&1 \
        | sed -u 's/^/  /'; then
-    display "✓ OpenClaw 配对预热完成"
+    display "✓ OpenClaw pairing warmup complete"
   else
     log "warmup_openclaw_pairing: drain returned non-zero — continuing (dashboard flow will retry)"
-    display "⚠ 配对预热未完成（可继续；首次打开 dashboard 时会重试）"
+    display "⚠ Pairing warmup did not complete (you can continue; the dashboard flow will retry on first open)"
   fi
 }
 
@@ -271,7 +271,7 @@ main() {
 
   # Start debug tail AFTER fd 3 is open (common.sh opens it at source time)
   if [[ "$DEBUG_MODE" == "1" ]]; then
-    display "日志文件：$CLAW_SESSION_LOG"
+    display "Log file: $CLAW_SESSION_LOG"
     tail -F "$CLAW_SESSION_LOG" >&2 &
     TAIL_PID=$!
     trap 'kill "$TAIL_PID" 2>/dev/null || true' EXIT
@@ -282,7 +282,7 @@ main() {
   if [[ -z "${INSTALLER_SKIP_ENV:-}" ]]; then
     run_steps "${ENV_STEPS[@]}"
   fi
-  display "@@step:openclaw-start:正在安装 OpenClaw 代理…"
+  display "@@step:openclaw-start:Installing OpenClaw agent…"
   install_openclaw_agent
 }
 

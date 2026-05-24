@@ -11,10 +11,10 @@ source "$__STEP_DIR/../lib/common.sh"
 
 step_system_tools() {
   : "${PLATFORM:?PLATFORM not set — call detect_platform first}"
-  display "@@step:system-tools:正在安装系统工具（ripgrep / ffmpeg）…"
+  display "@@step:system-tools:Installing system tools (ripgrep / ffmpeg)…"
   case "$PLATFORM" in
     macos)
-      command -v brew >/dev/null 2>&1 || die_step "安装系统工具" "Homebrew required on macOS." 1
+      command -v brew >/dev/null 2>&1 || die_step "Install system tools" "Homebrew required on macOS." 1
       local want=(ripgrep ffmpeg)
       local missing=() bin pkg
       for pkg in "${want[@]}"; do
@@ -32,7 +32,7 @@ step_system_tools() {
           manifest_record system_pkg "$pkg" brew_installed "brew"
         done
       else
-        display "系统工具已就绪，跳过安装"
+        display "System tools are ready; skipping install"
       fi
       ;;
     debian)
@@ -55,7 +55,7 @@ step_system_tools() {
           manifest_record system_pkg "$p" apt_shared "apt-get"
         done
       else
-        display "系统工具已就绪，跳过安装"
+        display "System tools are ready; skipping install"
       fi
       ;;
     rhel)
@@ -78,10 +78,10 @@ step_system_tools() {
           manifest_record system_pkg "$p" rhel_shared "$(basename "$pm")"
         done
       else
-        display "系统工具已就绪，跳过安装"
+        display "System tools are ready; skipping install"
       fi
       ;;
-    *) die_step "安装系统工具" "Unknown PLATFORM: $PLATFORM" 1 ;;
+    *) die_step "Install system tools" "Unknown PLATFORM: $PLATFORM" 1 ;;
   esac
 }
 

@@ -22,7 +22,7 @@ _shell_rc_block_body() {
 step_shell_rc() {
   : "${FNM_DIR:?FNM_DIR not set — run steps/fnm.sh first}"
   : "${PNPM_HOME:?PNPM_HOME not set — run steps/pnpm.sh first}"
-  display "@@step:shell-rc:正在配置 Shell 环境路径…"
+  display "@@step:shell-rc:Configuring shell PATH…"
   local targets=("$HOME/.bashrc")
   [[ -f "$HOME/.zshrc" ]] && targets+=("$HOME/.zshrc")
   local desired existing rc tmp
@@ -37,7 +37,7 @@ step_shell_rc() {
         in_blk { print }
       ' "$rc")"
     if [[ -n "$existing" && "$existing" == "$desired" ]]; then
-      display "$rc 路径配置已是最新，跳过"
+      display "$rc PATH block is up-to-date; skipping"
       manifest_record shell_rc_block "$rc" preexisting
       continue
     fi
@@ -54,7 +54,7 @@ step_shell_rc() {
       printf '%s\n' "$SHELL_RC_SENTINEL_END"
     } >> "$tmp"
     mv "$tmp" "$rc"
-    display "✓ $rc 路径配置已更新"
+    display "✓ $rc PATH block updated"
     manifest_record shell_rc_block "$rc" inserted
   done
 }

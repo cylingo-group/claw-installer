@@ -19,9 +19,9 @@ source "$__HE_DIR/../../lib/common.sh"
 main() {
   trap 'die_step_handler' ERR
 
-  display "@@step:hermes-start:正在启动 Hermes 网关…"
+  display "@@step:hermes-start:Starting Hermes gateway…"
   command -v hermes >/dev/null 2>&1 \
-    || die_step "启动 Hermes 网关" "hermes not on PATH — 请先安装 Hermes" 1
+    || die_step "Start Hermes gateway" "hermes not on PATH — please install Hermes first" 1
 
   # Fast-path: gateway already loaded by launchd. A running hermes gateway
   # status prints a "✓ Gateway service is loaded" (or "active") line; the
@@ -31,7 +31,7 @@ main() {
   status_out="$(run_with_timeout 10 hermes gateway status </dev/null 2>&1 || true)"
   if printf '%s' "$status_out" | grep -Eq '^[[:space:]]*✓[[:space:]]+Gateway service is (loaded|active|running)\b'; then
     log "$status_out"
-    display "✓ Hermes 网关已在运行"
+    display "✓ Hermes gateway is already running"
     exit 0
   fi
 
@@ -47,9 +47,9 @@ main() {
   if run run_with_timeout 60 hermes gateway start </dev/null; then
     sleep 1
     run hermes gateway status </dev/null || true
-    display "✓ Hermes 网关已启动"
+    display "✓ Hermes gateway started"
   else
-    display "✗ Hermes 网关启动失败"
+    display "✗ Hermes gateway failed to start"
     log "hermes gateway start exited non-zero. Run 'hermes doctor' for diagnostics."
     run hermes gateway status </dev/null 2>&1 || true
     exit 1

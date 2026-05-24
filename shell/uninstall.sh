@@ -63,7 +63,7 @@ row_matches_filter() {
       return 1
       ;;
     *)
-      die_step "卸载过滤" "Unknown CLAW_UNINSTALL_AGENT value: $AGENT_FILTER (expected: openclaw|hermes)" 1
+      die_step "Uninstall filter" "Unknown CLAW_UNINSTALL_AGENT value: $AGENT_FILTER (expected: openclaw|hermes)" 1
       ;;
   esac
 }
@@ -81,15 +81,15 @@ for arg in "$@"; do
       sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'
       exit 0
       ;;
-    *) die_step "参数解析" "Unknown flag: $arg (try --help)" 1 ;;
+    *) die_step "Argument parsing" "Unknown flag: $arg (try --help)" 1 ;;
   esac
 done
 
 # Missing manifest is NOT a failure — it means there's nothing to undo.
 # Either the installer was never run, or a previous uninstall already cleaned
-# everything up. Exit success so the GUI flips the agent back to "未安装".
+# everything up. Exit success so the GUI flips the agent back to "not installed".
 if [[ ! -f "$CLAW_MANIFEST" ]]; then
-  display "没有可卸载的内容（未发现安装记录）"
+  display "Nothing to uninstall (no install manifest found)"
   log "No manifest at $CLAW_MANIFEST — exiting 0 (nothing to do)"
   exit 0
 fi
@@ -134,7 +134,7 @@ rows_reverse() {
 declare -a SYSTEM_PKG_NOTES=()
 
 plan_summary() {
-  display "@@step:uninstall-plan:正在生成卸载计划…"
+  display "@@step:uninstall-plan:Generating uninstall plan…"
   local C_RESET='' T_REMOVE='[remove]' T_STRIP='[strip ]' T_KEEP='[keep  ]'
   local T_SKIP='[skip  ]' T_NOTE='[note  ]' T_UNK='[?unkwn]'
   # Color tags are only useful when the detail rows land on a real TTY (dry-run
@@ -159,9 +159,9 @@ plan_summary() {
   if (( DRY_RUN )); then plan_emit=display; else plan_emit=log; fi
 
   $plan_emit ""
-  $plan_emit "将按以下计划卸载（最新优先）："
+  $plan_emit "Will uninstall per the plan below (newest first):"
   $plan_emit "  Manifest:           $CLAW_MANIFEST"
-  $plan_emit "  Agent filter:       ${AGENT_FILTER:-<全部>}"
+  $plan_emit "  Agent filter:       ${AGENT_FILTER:-<all>}"
   $plan_emit "  Purge workspace?    $(( PURGE_WORKSPACE )) (use --purge-workspace to enable)"
   $plan_emit "  Purge hermes-home?  $(( PURGE_HERMES_HOME )) (use --purge-hermes-home to enable)"
   $plan_emit ""
@@ -285,12 +285,12 @@ plan_summary() {
   # plan summary instead of the verbose row-by-row breakdown.
   if (( ! DRY_RUN )); then
     local total=$(( n_remove + n_strip + n_keep + n_skip + n_note + n_unk ))
-    display "  计划：${total} 项（移除 ${n_remove} · 修改 ${n_strip} · 保留 ${n_keep} · 跳过 ${n_skip}）"
+    display "  Plan: ${total} item(s) (remove ${n_remove} · strip ${n_strip} · keep ${n_keep} · skip ${n_skip})"
   fi
 }
 
 apply_uninstall() {
-  display "@@step:uninstall-apply:正在执行卸载操作…"
+  display "@@step:uninstall-apply:Applying uninstall actions…"
   while IFS=$'\t' read -r _ts action target status _note; do
     row_matches_filter "$action" "$target" || continue
     case "$action" in
@@ -401,11 +401,11 @@ apply_uninstall() {
 }
 
 print_followup() {
-  display "✓ 卸载完成"
-  display "  日志：$CLAW_SESSION_LOG"
+  display "✓ Uninstall complete"
+  display "  Log: $CLAW_SESSION_LOG"
   if (( ${#SYSTEM_PKG_NOTES[@]} > 0 )); then
     display ""
-    display "  系统共享依赖未被移除（避免影响其他软件）。如需手动清理，曾被本安装器触及："
+    display "  Shared system dependencies were NOT removed (could affect other software). For manual cleanup, these were touched by the installer:"
     local p
     for p in "${SYSTEM_PKG_NOTES[@]}"; do
       log "    - $p"
@@ -413,19 +413,19 @@ print_followup() {
   fi
   if (( ! PURGE_WORKSPACE )); then
     display ""
-    display "  OpenClaw workspace 已保留。要一并清除请使用：./uninstall.sh --purge-workspace"
+    display "  OpenClaw workspace was preserved. To wipe it too, re-run: ./uninstall.sh --purge-workspace"
   fi
   if (( ! PURGE_HERMES_HOME )); then
-    display "  Hermes home (~/.hermes) 已保留。要一并清除请使用：./uninstall.sh --purge-hermes-home"
-    log "  注意：上游脚本写入 ~/.bashrc / ~/.zshrc / ~/.profile 的 ~/.local/bin PATH 行无 sentinel，"
-    log "        如需移除请手动检查 rc 文件。"
+    display "  Hermes home (~/.hermes) was preserved. To wipe it too, re-run: ./uninstall.sh --purge-hermes-home"
+    log "  Note: the upstream installer writes ~/.local/bin PATH lines into"
+    log "        ~/.bashrc / ~/.zshrc / ~/.profile without sentinels — review those rc files manually if you want to remove them."
   fi
 }
 
 main() {
   # Start debug tail if requested (fd 3 was opened when common.sh was sourced)
   if (( DEBUG_MODE )); then
-    display "日志文件：$CLAW_SESSION_LOG"
+    display "Log file: $CLAW_SESSION_LOG"
     tail -F "$CLAW_SESSION_LOG" >&2 &
     TAIL_PID=$!
     trap 'kill "$TAIL_PID" 2>/dev/null || true' EXIT
@@ -436,14 +436,14 @@ main() {
   plan_summary
   if (( DRY_RUN )); then
     log "Dry run — no changes made."
-    display "试运行完成，未做任何更改。"
+    display "Dry run complete — no changes were made."
     return
   fi
   if (( ! ASSUME_YES )); then
     read -r -p "Proceed with uninstall? [y/N] " ans
     case "$ans" in
       y|Y|yes|YES) ;;
-      *) die_step "卸载确认" "Aborted by user." 1 ;;
+      *) die_step "Uninstall confirmation" "Aborted by user." 1 ;;
     esac
   fi
   apply_uninstall

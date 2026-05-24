@@ -41,8 +41,8 @@ DEBUG_MODE="${DEBUG_MODE:-0}"
 run_agent() {
   local agent="$1"
   local script="$__INSTALL_DIR/agents/${agent}/install.sh"
-  [[ -f "$script" ]] || die_step "安装代理" "Agent installer not found: $script" 1
-  display "@@step:agent-${agent}:正在安装 ${agent} 代理…"
+  [[ -f "$script" ]] || die_step "Install agent" "Agent installer not found: $script" 1
+  display "@@step:agent-${agent}:Installing ${agent} agent…"
   # Suppress per-agent env-step re-run; we already ran env deps once above.
   # Pass CLAW_SESSION_LOG and DEBUG_MODE down so the child appends to the same
   # log file and, if debug mode is active, also tails it.
@@ -128,7 +128,7 @@ EOF
 
   # Start debug tail AFTER fd 3 is open (common.sh opens it at source time)
   if [[ "$DEBUG_MODE" == "1" ]]; then
-    display "日志文件：$CLAW_SESSION_LOG"
+    display "Log file: $CLAW_SESSION_LOG"
     tail -F "$CLAW_SESSION_LOG" >&2 &
     TAIL_PID=$!
     trap 'kill "$TAIL_PID" 2>/dev/null || true' EXIT
@@ -136,7 +136,7 @@ EOF
 
   trap 'die_step_handler' ERR
 
-  display "@@step:start:正在初始化安装程序…"
+  display "@@step:start:Initializing installer…"
   log "claw-installer: full install (agents: ${AGENTS[*]})"
 
   local -a steps=()
@@ -150,7 +150,7 @@ EOF
     run_agent "$agent"
   done
 
-  display "✓ 全部安装完成"
+  display "✓ All installs complete"
   log "Manifest: $CLAW_MANIFEST"
 }
 

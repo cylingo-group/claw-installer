@@ -26,17 +26,17 @@ source "$__SELF_DIR/../../lib/common.sh"
 _claw_compose_path
 
 if [[ -z "${INSTALLER_OP_PAIR_CODE:-}" ]]; then
-  echo "pair-bubbolink: INSTALLER_OP_PAIR_CODE 未设置" >&2
+  echo "pair-bubbolink: INSTALLER_OP_PAIR_CODE is not set" >&2
   exit 2
 fi
 
 if [[ ! "$INSTALLER_OP_PAIR_CODE" =~ ^[0-9]{4}$ ]]; then
-  echo "pair-bubbolink: 配对码必须是 4 位数字" >&2
+  echo "pair-bubbolink: pairing code must be exactly 4 digits" >&2
   exit 2
 fi
 
 if ! command -v bubbolink >/dev/null 2>&1; then
-  echo "pair-bubbolink: bubbolink 命令未找到，请先完成 OpenClaw 安装" >&2
+  echo "pair-bubbolink: bubbolink command not found — finish installing OpenClaw first" >&2
   exit 127
 fi
 

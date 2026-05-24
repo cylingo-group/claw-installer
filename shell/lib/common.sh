@@ -7,7 +7,7 @@
 # =============================================================================
 # Scripts must author EVERY user-visible string explicitly. Three primitives:
 #
-#   display "中文描述…"
+#   display "human-readable description"
 #       Writes to stdout (user sees it) AND to fd 3 (session log file).
 #       If the argument matches @@step:<key>:<label>, it also sets CURRENT_STEP.
 #
@@ -46,8 +46,9 @@
 #
 # macOS ships bash 3.2 at /bin/bash. Under a UTF-8 LC_CTYPE, bash 3.2's
 # tokenizer treats high-bit bytes as part of an identifier instead of as a
-# word boundary. So  "版本 $hv）"  parses as ${hv）} — bash hunts for a
-# variable literally named "hv<utf8-bytes-of-）>", and under `set -u` that
+# word boundary. So a string like  "ver $hv）"  with a CJK closing paren parses
+# as ${hv）} — bash hunts for a variable literally named
+# "hv<utf8-bytes-of-）>", and under `set -u` that
 # unbound lookup is fatal and bypasses the ERR trap (no failure block, no
 # fd-3 log line — the child just vanishes mid-pipeline).
 #
@@ -363,8 +364,8 @@ _claw_enable_trace
 #   then run the command. For explicit key control use display + run directly.
 #
 #   Usage:
-#     step "正在安装 Node 22 运行时" -- fnm install 22
-#     step --key node "正在安装 Node 22 运行时" -- fnm install 22
+#     step "Installing Node 22 runtime" -- fnm install 22
+#     step --key node "Installing Node 22 runtime" -- fnm install 22
 step() {
   local key label
   if [[ "${1:-}" == "--key" ]]; then
@@ -392,7 +393,7 @@ step() {
 # last successful display() line is in the log.
 _claw_emit_stack() {
   local i frame
-  printf '✗ 调用栈 (frame: file:line function):\n' >&3
+  printf '✗ Call stack (frame: file:line function):\n' >&3
   # BASH_SOURCE[0] is this helper; skip it.
   for (( i=1; i<${#BASH_SOURCE[@]}; i++ )); do
     frame="${BASH_SOURCE[$i]##*/}:${BASH_LINENO[$i-1]:-?} ${FUNCNAME[$i]:-main}"
@@ -417,15 +418,15 @@ die_step_handler() {
   # Suppress xtrace noise while we report the failure — otherwise the user's
   # screen and the tail of the log get drowned in trace lines for printf.
   set +x 2>/dev/null || true
-  local step_label="${CURRENT_STEP:-（未知步骤）}"
-  local cmd="${BASH_COMMAND:-（未知命令）}"
-  printf '✗ 失败步骤：%s\n' "$step_label"
-  printf '✗ 失败原因：%s 退出码 %s\n' "$cmd" "$exit_code"
-  printf '✗ 详见完整日志：%s\n' "${CLAW_SESSION_LOG:-（日志路径未知）}"
+  local step_label="${CURRENT_STEP:-(unknown step)}"
+  local cmd="${BASH_COMMAND:-(unknown command)}"
+  printf '✗ Failed step:  %s\n' "$step_label"
+  printf '✗ Cause:        %s (exit %s)\n' "$cmd" "$exit_code"
+  printf '✗ See full log: %s\n' "${CLAW_SESSION_LOG:-(log path unknown)}"
   {
-    printf '✗ 失败步骤：%s\n' "$step_label"
-    printf '✗ 失败原因：%s 退出码 %s\n' "$cmd" "$exit_code"
-    printf '✗ 详见完整日志：%s\n' "${CLAW_SESSION_LOG:-（日志路径未知）}"
+    printf '✗ Failed step:  %s\n' "$step_label"
+    printf '✗ Cause:        %s (exit %s)\n' "$cmd" "$exit_code"
+    printf '✗ See full log: %s\n' "${CLAW_SESSION_LOG:-(log path unknown)}"
   } >&3
   _claw_emit_stack
   _claw_flush_log
@@ -436,16 +437,16 @@ die_step_handler() {
 #   Explicit variant: caller provides all three values directly.
 die_step() {
   set +x 2>/dev/null || true
-  local step_label="${1:-（未知步骤）}"
-  local cmd="${2:-（未知命令）}"
+  local step_label="${1:-(unknown step)}"
+  local cmd="${2:-(unknown command)}"
   local exit_code="${3:-1}"
-  printf '✗ 失败步骤：%s\n' "$step_label"
-  printf '✗ 失败原因：%s 退出码 %s\n' "$cmd" "$exit_code"
-  printf '✗ 详见完整日志：%s\n' "${CLAW_SESSION_LOG:-（日志路径未知）}"
+  printf '✗ Failed step:  %s\n' "$step_label"
+  printf '✗ Cause:        %s (exit %s)\n' "$cmd" "$exit_code"
+  printf '✗ See full log: %s\n' "${CLAW_SESSION_LOG:-(log path unknown)}"
   {
-    printf '✗ 失败步骤：%s\n' "$step_label"
-    printf '✗ 失败原因：%s 退出码 %s\n' "$cmd" "$exit_code"
-    printf '✗ 详见完整日志：%s\n' "${CLAW_SESSION_LOG:-（日志路径未知）}"
+    printf '✗ Failed step:  %s\n' "$step_label"
+    printf '✗ Cause:        %s (exit %s)\n' "$cmd" "$exit_code"
+    printf '✗ See full log: %s\n' "${CLAW_SESSION_LOG:-(log path unknown)}"
   } >&3
   _claw_emit_stack
   _claw_flush_log
@@ -459,7 +460,7 @@ _claw_signal_handler() {
   local sig="$1"
   set +x 2>/dev/null || true
   {
-    printf '⚠ 收到信号 %s — 步骤=%s cmd=%s pid=%s\n' \
+    printf '⚠ Caught signal %s — step=%s cmd=%s pid=%s\n' \
       "$sig" "${CURRENT_STEP:-?}" "${BASH_COMMAND:-?}" "$$"
   } >&3 2>/dev/null || true
   _claw_emit_stack 2>/dev/null || true
@@ -486,22 +487,22 @@ run_as_root() {
   elif command -v sudo >/dev/null 2>&1; then
     sudo "$@"
   else
-    die_step "权限检查" "Need root to run: $* (install sudo or rerun as root)" 1
+    die_step "Permission check" "Need root to run: $* (install sudo or rerun as root)" 1
   fi
 }
 
 detect_platform() {
-  display "@@step:detect-platform:正在检测系统平台…"
+  display "@@step:detect-platform:Detecting system platform…"
   case "$(uname -s)" in
     Darwin) PLATFORM="macos" ;;
     Linux)
       if   command -v apt-get >/dev/null 2>&1; then PLATFORM="debian"
       elif command -v dnf     >/dev/null 2>&1; then PLATFORM="rhel"
       elif command -v yum     >/dev/null 2>&1; then PLATFORM="rhel"
-      else die_step "系统平台检测" "Unsupported Linux distro (need apt-get / dnf / yum)" 1
+      else die_step "Platform detection" "Unsupported Linux distro (need apt-get / dnf / yum)" 1
       fi
       ;;
-    *) die_step "系统平台检测" "Unsupported OS: $(uname -s)" 1 ;;
+    *) die_step "Platform detection" "Unsupported OS: $(uname -s)" 1 ;;
   esac
   export PLATFORM
   log "Detected platform: $PLATFORM ($(uname -sm))"
@@ -578,11 +579,11 @@ run_steps() {
   local s file fn
   for s in "$@"; do
     file="$CLAW_STEPS_DIR/$s.sh"
-    [[ -f "$file" ]] || die_step "步骤加载" "Unknown step: $s (no such file $file)" 1
+    [[ -f "$file" ]] || die_step "Step loader" "Unknown step: $s (no such file $file)" 1
     # shellcheck source=/dev/null
     source "$file"
     fn="step_${s//-/_}"
-    type "$fn" >/dev/null 2>&1 || die_step "步骤加载" "Step '$s' did not define function $fn" 1
+    type "$fn" >/dev/null 2>&1 || die_step "Step loader" "Step '$s' did not define function $fn" 1
     "$fn"
   done
 }
@@ -594,7 +595,7 @@ run_steps() {
 agent_env_steps() {
   local agent="$1"
   local script="$CLAW_INSTALLER_ROOT/agents/$agent/install.sh"
-  [[ -f "$script" ]] || die_step "代理查找" "Unknown agent: $agent (no $script)" 1
+  [[ -f "$script" ]] || die_step "Agent lookup" "Unknown agent: $agent (no $script)" 1
   ( # shellcheck source=/dev/null
     source "$script" >/dev/null 2>&1
     printf '%s\n' "${ENV_STEPS[@]:-}" )

@@ -8,8 +8,8 @@ source "$__STEP_DIR/../lib/common.sh"
 
 step_pnpm() {
   : "${PLATFORM:?PLATFORM not set — call detect_platform first}"
-  display "@@step:pnpm:正在准备 pnpm 包管理器…"
-  command -v corepack >/dev/null 2>&1 || die_step "准备 pnpm" "corepack not on PATH — run steps/node.sh first" 1
+  display "@@step:pnpm:Preparing the pnpm package manager…"
+  command -v corepack >/dev/null 2>&1 || die_step "Prepare pnpm" "corepack not on PATH — run steps/node.sh first" 1
   log "corepack: $(command -v corepack)"
   log "node:     $(command -v node)"
   log "npm reg:  $NPM_REGISTRY"
@@ -35,7 +35,7 @@ step_pnpm() {
     pnpm_v="$(pnpm --version 2>&1)" || pnpm_v_rc=$?
     log "pnpm preflight: path=$(command -v pnpm) rc=$pnpm_v_rc out=$pnpm_v"
     if [[ "$pnpm_v_rc" -eq 0 && -z "${INSTALLER_FORCE_REINSTALL:-}" ]]; then
-      display "pnpm $pnpm_v 已激活，跳过"
+      display "pnpm $pnpm_v already active; skipping"
       manifest_record corepack_pnpm "pnpm@latest" preexisting
       return
     fi
@@ -48,14 +48,14 @@ step_pnpm() {
   corepack enable >&3 2>&3 || ce_rc=$?
   log "corepack enable: rc=$ce_rc"
   if [[ "$ce_rc" -ne 0 ]]; then
-    die_step "准备 pnpm" "corepack enable 失败 (rc=$ce_rc) — 检查 PNPM_HOME=$PNPM_HOME 写权限和 npm 镜像 $NPM_REGISTRY 可达性。" "$ce_rc"
+    die_step "Prepare pnpm" "corepack enable failed (rc=$ce_rc) — check write permission on PNPM_HOME=$PNPM_HOME and reachability of npm mirror $NPM_REGISTRY." "$ce_rc"
   fi
 
   local cp_rc=0
   corepack prepare pnpm@latest --activate >&3 2>&3 || cp_rc=$?
   log "corepack prepare pnpm@latest --activate: rc=$cp_rc"
   if [[ "$cp_rc" -ne 0 ]]; then
-    die_step "准备 pnpm" "corepack prepare pnpm@latest 失败 (rc=$cp_rc) — 镜像 $NPM_REGISTRY 可能不可达，或签名校验失败。" "$cp_rc"
+    die_step "Prepare pnpm" "corepack prepare pnpm@latest failed (rc=$cp_rc) — mirror $NPM_REGISTRY may be unreachable, or signature verification failed." "$cp_rc"
   fi
   manifest_record corepack_pnpm "pnpm@latest" activated
 
@@ -70,9 +70,9 @@ step_pnpm() {
   pnpm_v="$(pnpm --version 2>&1)" || final_rc=$?
   log "pnpm --version (post-activate): rc=$final_rc out=$pnpm_v"
   if [[ "$final_rc" -ne 0 ]]; then
-    die_step "准备 pnpm" "pnpm --version 退出码 $final_rc (输出: $pnpm_v)" "$final_rc"
+    die_step "Prepare pnpm" "pnpm --version exited $final_rc (output: $pnpm_v)" "$final_rc"
   fi
-  display "✓ pnpm $pnpm_v 已就绪"
+  display "✓ pnpm $pnpm_v is ready"
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then

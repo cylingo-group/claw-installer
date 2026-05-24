@@ -9,12 +9,12 @@ __STEP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$__STEP_DIR/../lib/common.sh"
 
 step_bubbolink() {
-  display "@@step:bubbolink:正在安装 @bubbolink/cli…"
+  display "@@step:bubbolink:Installing @bubbolink/cli…"
   command -v pnpm >/dev/null 2>&1 \
-    || die_step "安装 @bubbolink/cli" "pnpm not on PATH — run steps/pnpm.sh first" 1
+    || die_step "Install @bubbolink/cli" "pnpm not on PATH — run steps/pnpm.sh first" 1
 
   if command -v bubbolink >/dev/null 2>&1 && [[ -z "${INSTALLER_FORCE_REINSTALL:-}" ]]; then
-    display "@bubbolink/cli 已安装，跳过（版本 $(bubbolink --version 2>/dev/null || echo unknown)）"
+    display "@bubbolink/cli is already installed; skipping (version $(bubbolink --version 2>/dev/null || echo unknown))"
     manifest_record pnpm_global_pkg "@bubbolink/cli" preexisting
     return
   fi
@@ -25,8 +25,8 @@ step_bubbolink() {
   run pnpm add -g @bubbolink/cli </dev/null
   hash -r 2>/dev/null || true
   command -v bubbolink >/dev/null 2>&1 \
-    || die_step "安装 @bubbolink/cli" "bubbolink not on PATH after install (PNPM_HOME=${PNPM_HOME:-unset})" 1
-  display "✓ @bubbolink/cli 已安装：$(command -v bubbolink)"
+    || die_step "Install @bubbolink/cli" "bubbolink not on PATH after install (PNPM_HOME=${PNPM_HOME:-unset})" 1
+  display "✓ @bubbolink/cli installed: $(command -v bubbolink)"
   manifest_record pnpm_global_pkg "@bubbolink/cli" installed
 }
 

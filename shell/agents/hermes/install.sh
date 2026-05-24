@@ -47,7 +47,7 @@ HERMES_BIN="$HOME/.local/bin/hermes"
 DEBUG_MODE="${DEBUG_MODE:-0}"
 
 prepare_hermes_repo() {
-  display "@@step:hermes-repo:正在预克隆 Hermes 代码仓库…"
+  display "@@step:hermes-repo:Pre-cloning Hermes repository…"
   # Workaround for upstream's SSH-first clone strategy. On restricted networks
   # the TCP handshake to github.com:22 succeeds but the SSH protocol negotiation
   # hangs; upstream's GIT_SSH_COMMAND sets ConnectTimeout=5 which only covers
@@ -55,24 +55,24 @@ prepare_hermes_repo() {
   # clone_repo() take its "Existing installation found, updating" branch and
   # skip the SSH attempt entirely.
   if [[ -d "$HERMES_INSTALL_DIR/.git" ]]; then
-    display "Hermes 仓库已存在，跳过克隆"
+    display "Hermes repo already present; skipping clone"
     log "Hermes repo already present at $HERMES_INSTALL_DIR (upstream will update in-place)"
     return
   fi
   if [[ -e "$HERMES_INSTALL_DIR" ]]; then
-    die_step "预克隆 Hermes 仓库" "$HERMES_INSTALL_DIR exists but is not a git repo. Remove it, or pick another dir via INSTALLER_HERMES_DIR." 1
+    die_step "Pre-clone Hermes repo" "$HERMES_INSTALL_DIR exists but is not a git repo. Remove it, or pick another dir via INSTALLER_HERMES_DIR." 1
   fi
-  command -v git >/dev/null 2>&1 || die_step "预克隆 Hermes 仓库" "git not on PATH — base-deps step should have installed it" 1
+  command -v git >/dev/null 2>&1 || die_step "Pre-clone Hermes repo" "git not on PATH — base-deps step should have installed it" 1
   log "Pre-cloning hermes via HTTPS (shallow, single-branch): $HERMES_REPO_HTTPS (branch=$HERMES_BRANCH) → $HERMES_INSTALL_DIR"
   mkdir -p "$(dirname "$HERMES_INSTALL_DIR")"
   # --single-branch + --depth 1 keep the transfer minimal.
   run git clone --branch "$HERMES_BRANCH" --single-branch --depth 1 \
        "$HERMES_REPO_HTTPS" "$HERMES_INSTALL_DIR" </dev/null \
-    || die_step "预克隆 Hermes 仓库" "git clone failed for $HERMES_REPO_HTTPS (branch=$HERMES_BRANCH)" 1
+    || die_step "Pre-clone Hermes repo" "git clone failed for $HERMES_REPO_HTTPS (branch=$HERMES_BRANCH)" 1
 }
 
 run_upstream_hermes_installer() {
-  display "@@step:hermes-upstream:正在运行 Hermes 上游安装脚本（首次约 2-5 分钟）…"
+  display "@@step:hermes-upstream:Running upstream Hermes installer (2–5 min on first run)…"
   # Always pass --skip-setup: the wizard reads from /dev/tty and would block
   # in non-interactive contexts (CI, the future GUI). Users run `hermes setup`
   # themselves after the installer returns.
@@ -119,7 +119,7 @@ install_hermes_agent() {
     # Brace the var so bash 3.2 (macOS /bin/bash) doesn't read the trailing
     # full-width 」 as part of the variable name, which under `set -u` turns
     # into a fatal "hv）: unbound variable" that bypasses the ERR trap.
-    display "Hermes 已安装，跳过上游安装（版本 ${hv}）"
+    display "Hermes already installed; skipping upstream install (version ${hv})"
     log "Hermes already installed at $HERMES_BIN${hv:+ ($hv)} — skipping upstream installer (set INSTALLER_FORCE_REINSTALL=1 to redo)"
     manifest_record hermes_install_dir "$HERMES_INSTALL_DIR" "$id_status"
     manifest_record hermes_home        "$HERMES_HOME_DIR"    "$hh_status"
@@ -136,7 +136,7 @@ install_hermes_agent() {
 
   # Run upstream installer; die_step_handler fires on non-zero via ERR trap.
   run_upstream_hermes_installer
-  display "✓ Hermes 上游安装完成"
+  display "✓ Hermes upstream install complete"
 
   [[ -d "$HERMES_INSTALL_DIR" ]] && manifest_record hermes_install_dir "$HERMES_INSTALL_DIR" "$id_status"
   [[ -d "$HERMES_HOME_DIR"    ]] && manifest_record hermes_home        "$HERMES_HOME_DIR"    "$hh_status"
@@ -179,12 +179,12 @@ prebuild_hermes_web_ui() {
     log "prebuild_hermes_web_ui: npm not on PATH — skipping (dashboard will build on first open)"
     return 0
   fi
-  display "@@step:hermes-web-prebuild:正在预构建 Hermes Dashboard 前端（首次约 30-60s）…"
+  display "@@step:hermes-web-prebuild:Pre-building Hermes Dashboard frontend (30–60s on first run)…"
   if run_with_timeout 600 bash -c "cd '$web_dir' && npm install --silent && npm run build" </dev/null; then
-    display "✓ Hermes Dashboard 前端已预构建"
+    display "✓ Hermes Dashboard frontend pre-built"
   else
     log "prebuild_hermes_web_ui: build failed — dashboard will retry on first open"
-    display "⚠ Hermes Dashboard 前端预构建失败（首次打开 dashboard 时会重试构建）"
+    display "⚠ Hermes Dashboard frontend pre-build failed (will retry on first dashboard open)"
   fi
 }
 
@@ -195,12 +195,12 @@ prebuild_hermes_web_ui() {
 #
 # Idempotent. Recorded in the manifest so uninstall can remove the plist/unit.
 register_hermes_gateway_service() {
-  display "@@step:hermes-service:正在注册 Hermes 网关服务…"
+  display "@@step:hermes-service:Registering Hermes gateway service…"
   command -v hermes >/dev/null 2>&1 \
     || { log "hermes not on PATH after install — skipping gateway service registration"; return; }
   if run run_with_timeout 30 hermes gateway install </dev/null; then
     manifest_record hermes_service gateway installed
-    display "✓ Hermes 网关服务已注册（启动需在 UI 中点击）"
+    display "✓ Hermes gateway service registered (start it from the GUI)"
   else
     log "hermes gateway install timed out or non-zero — service definition may be missing."
     log "  Run manually: hermes gateway install"
@@ -208,21 +208,23 @@ register_hermes_gateway_service() {
 }
 
 _print_hermes_summary() {
-  display "✓ Hermes Agent 安装完成"
+  display "✓ Hermes Agent install complete"
   log "Repo           : $HERMES_INSTALL_DIR (branch=$HERMES_BRANCH)"
   log "Data dir       : $HERMES_HOME_DIR"
   log "Command        : $HERMES_BIN"
   log ""
-  log "下一步:"
-  log "  1. 重新打开 shell（或 source ~/.bashrc）让 PATH 生效"
-  log "  2. hermes setup    # 交互式配置 API key / 模型 / 通信渠道"
-  log "  3. hermes          # 进入对话"
+  log "Next steps:"
+  log "  1. Reopen your shell (or 'source ~/.bashrc') so PATH takes effect"
+  log "  2. hermes setup    # interactive: API key / model / channel"
+  log "  3. hermes          # start chatting"
   log ""
-  log "说明:"
-  log "  - 系统层依赖 (uv / Python3.11 / Node v22 / ripgrep / ffmpeg / Playwright)"
-  log "    由上游脚本安装；与本仓库 fnm 管理的 Node 24 互不冲突。"
-  log "  - 上游会把 PATH 写进 ~/.bashrc / ~/.zshrc / ~/.profile，行内无 sentinel；"
-  log "    uninstall.sh 不会自动剥离这些行（避免误删用户其它配置）。"
+  log "Notes:"
+  log "  - System-level deps (uv / Python 3.11 / Node v22 / ripgrep / ffmpeg / Playwright)"
+  log "    are installed by the upstream script; they don't clash with this repo's"
+  log "    fnm-managed Node 24."
+  log "  - The upstream script writes PATH lines into ~/.bashrc / ~/.zshrc / ~/.profile"
+  log "    without any sentinel; uninstall.sh leaves those lines alone (avoids"
+  log "    deleting unrelated user config)."
 }
 
 main() {
@@ -240,7 +242,7 @@ main() {
 
   # Start debug tail AFTER fd 3 is open (common.sh opens it at source time)
   if [[ "$DEBUG_MODE" == "1" ]]; then
-    display "日志文件：$CLAW_SESSION_LOG"
+    display "Log file: $CLAW_SESSION_LOG"
     tail -F "$CLAW_SESSION_LOG" >&2 &
     TAIL_PID=$!
     trap 'kill "$TAIL_PID" 2>/dev/null || true' EXIT

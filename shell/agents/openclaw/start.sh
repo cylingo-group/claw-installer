@@ -17,15 +17,15 @@ source "$__OC_DIR/../../lib/common.sh"
 main() {
   trap 'die_step_handler' ERR
 
-  display "@@step:openclaw-start:正在启动 OpenClaw 网关…"
+  display "@@step:openclaw-start:Starting OpenClaw gateway…"
   command -v openclaw >/dev/null 2>&1 \
-    || die_step "启动 OpenClaw 网关" "openclaw not on PATH — 请先安装 OpenClaw" 1
+    || die_step "Start OpenClaw gateway" "openclaw not on PATH — please install OpenClaw first" 1
 
   local status_out=""
   status_out="$(run_with_timeout 10 openclaw gateway status </dev/null 2>&1 || true)"
   if printf '%s' "$status_out" | grep -Eqi 'running|active \(running\)|status:[[:space:]]*up'; then
     log "$status_out"
-    display "✓ OpenClaw 网关已在运行"
+    display "✓ OpenClaw gateway is already running"
     exit 0
   fi
 
@@ -33,9 +33,9 @@ main() {
   if run run_with_timeout 60 openclaw gateway start </dev/null; then
     sleep 1
     run openclaw gateway status </dev/null || true
-    display "✓ OpenClaw 网关已启动"
+    display "✓ OpenClaw gateway started"
   else
-    display "✗ OpenClaw 网关启动失败"
+    display "✗ OpenClaw gateway failed to start"
     log "openclaw gateway start exited non-zero. Run 'openclaw doctor' for diagnostics."
     run openclaw gateway status </dev/null 2>&1 || true
     exit 1

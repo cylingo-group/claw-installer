@@ -14,8 +14,8 @@ source "$__STEP_DIR/../lib/common.sh"
 # elevates the entire installer to root (matches the WSL-on-Windows UX). Returns
 # 0 on success, 1 on user cancellation or installer failure.
 install_homebrew_macos() {
-  display "@@step:install-homebrew:正在安装 Homebrew…"
-  display "  首次安装约需 5-10 分钟，期间会弹出系统授权对话框"
+  display "@@step:install-homebrew:Installing Homebrew…"
+  display "  First-time install takes ~5–10 min; macOS will prompt for your password"
   log "Running official Homebrew installer with administrator privileges via osascript"
 
   # `do shell script ... with administrator privileges` runs under sudo with a
@@ -49,7 +49,7 @@ install_homebrew_macos() {
   if out=$(osascript -e "do shell script \"$osa_cmd\" with administrator privileges" 2>&1); then
     log "Homebrew installer output:"
     log "$out"
-    display "✓ Homebrew 安装完成"
+    display "✓ Homebrew install complete"
     if [[ -x /opt/homebrew/bin/brew ]]; then
       eval "$(/opt/homebrew/bin/brew shellenv)"
     elif [[ -x /usr/local/bin/brew ]]; then
@@ -107,14 +107,14 @@ align_brew_remotes_with_mirror_macos() {
 
 step_base_deps() {
   : "${PLATFORM:?PLATFORM not set — call detect_platform first}"
-  display "@@step:base-deps:正在安装基础依赖…"
+  display "@@step:base-deps:Installing base dependencies…"
   case "$PLATFORM" in
     macos)
       if ! command -v brew >/dev/null 2>&1; then
         install_homebrew_macos \
-          || die_step "基础依赖检查" "Homebrew 自动安装失败或被取消，请手动从 https://brew.sh 安装后重试" 1
+          || die_step "Base dependency check" "Homebrew auto-install failed or was cancelled — install manually from https://brew.sh and retry" 1
         command -v brew >/dev/null 2>&1 \
-          || die_step "基础依赖检查" "Homebrew installed but not on PATH" 1
+          || die_step "Base dependency check" "Homebrew installed but not on PATH" 1
       else
         align_brew_remotes_with_mirror_macos
       fi
@@ -133,7 +133,7 @@ step_base_deps() {
           manifest_record system_pkg "$bin" brew_installed "brew"
         done
       else
-        display "基础依赖已就绪，跳过安装"
+        display "Base dependencies are ready; skipping install"
       fi
       ;;
     debian)
@@ -160,7 +160,7 @@ step_base_deps() {
           manifest_record system_pkg "$p" apt_shared "apt-get"
         done
       else
-        display "基础依赖已就绪，跳过安装"
+        display "Base dependencies are ready; skipping install"
       fi
       ;;
     rhel)
@@ -187,10 +187,10 @@ step_base_deps() {
           manifest_record system_pkg "$p" rhel_shared "$(basename "$pm")"
         done
       else
-        display "基础依赖已就绪，跳过安装"
+        display "Base dependencies are ready; skipping install"
       fi
       ;;
-    *) die_step "基础依赖检查" "Unknown PLATFORM: $PLATFORM" 1 ;;
+    *) die_step "Base dependency check" "Unknown PLATFORM: $PLATFORM" 1 ;;
   esac
 }
 

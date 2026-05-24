@@ -101,7 +101,7 @@ try {
 #      forwarding new bytes to its own stdout — which Tauri *can* capture.
 #
 # The GUI (Rust side) computes the path and passes it via CLAW_SESSION_LOG so
-# the GUI's "完整日志：<path>" UI points at the same file the script writes.
+# the GUI's "Full log: <path>" UI points at the same file the script writes.
 # If unset (manual CLI invocation), mint one. Either way, *write the resolved
 # value back into the env var* so elevated children inherit the same path.
 if ($SessionLogPath) {
@@ -273,7 +273,7 @@ function Assert-Elevated {
   if ($principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     return
   }
-  Write-Display "需要管理员权限，正在请求 UAC 授权…"
+  Write-Display "Administrator privileges required — requesting UAC authorization…"
 
   # Allocate a marker file the elevated child will write its reboot kind into,
   # so we can re-emit the @@reboot:<kind> sentinel from the parent (which IS
@@ -312,7 +312,7 @@ function Assert-Elevated {
       -Verb RunAs -WindowStyle Hidden -PassThru
 
     # Record current file size so we don't replay content the parent itself
-    # wrote before elevation (e.g. the "需要管理员权限…" line above).
+    # wrote before elevation (e.g. the "Administrator privileges required…" line above).
     $lastSize = 0
     if (Test-Path $SessionLog) { $lastSize = (Get-Item $SessionLog).Length }
 
@@ -332,7 +332,7 @@ function Assert-Elevated {
     }
     exit $proc.ExitCode
   } catch {
-    Write-Err2 "UAC 授权被拒绝或取消：$_"
+    Write-Err2 "UAC authorization denied or cancelled: $_"
     exit 4
   }
 }
@@ -368,7 +368,7 @@ function Test-WslAvailable_Quick {
 # Why we can't just use `Get-Command wsl.exe`: starting with Windows 11 build
 # 22000, Microsoft ships a wsl.exe *stub* in System32 even on machines where
 # the Linux subsystem feature has never been enabled. That stub satisfies
-# Get-Command but, when invoked, prints "未安装适用于 Linux 的 Windows 子系统"
+# Get-Command but, when invoked, prints "Windows Subsystem for Linux is not installed"
 # to stderr and exits non-zero. So Get-Command alone is a false positive that
 # makes the rest of the script blindly call wsl.exe and crash.
 function Test-WslFunctional {
@@ -692,20 +692,20 @@ function Show-FirmwareVirtualizationHelp {
   # Headline goes through Write-Display so it surfaces in the GUI's progress
   # banner directly. (Write-Err2 was wrong here — it writes to the [debug]
   # stream, which the frontend filters out of the user-facing log.)
-  Write-Display "CPU 虚拟化未启用 — 需要先在 BIOS / UEFI 里开启 Intel VT-x 或 AMD SVM 才能继续。"
+  Write-Display "CPU virtualization is disabled — enable Intel VT-x or AMD SVM in BIOS/UEFI before continuing."
   Write-Display ""
-  Write-Display "WSL 2 需要 CPU 硬件虚拟化指令 (Intel VT-x / AMD SVM)，"
-  Write-Display "这个开关只能在 BIOS 里打开，安装器无法替你完成。"
+  Write-Display "WSL 2 requires CPU hardware virtualization instructions (Intel VT-x / AMD SVM)."
+  Write-Display "This setting can only be enabled in BIOS; the installer cannot do it for you."
   Write-Display ""
-  Write-Display "操作步骤："
-  Write-Display "  1. 重启电脑，开机时按 F2 / Del / Esc（按主板不同）进入 BIOS / UEFI 设置。"
-  Write-Display "  2. 在 CPU / Advanced / Virtualization 等菜单里，找到："
+  Write-Display "Steps:"
+  Write-Display "  1. Reboot, then press F2 / Del / Esc during POST (varies by motherboard) to enter BIOS/UEFI."
+  Write-Display "  2. Under CPU / Advanced / Virtualization menus, locate:"
   Write-Display "       Intel: Intel Virtualization Technology (VT-x)"
   Write-Display "       AMD:   SVM Mode / AMD-V"
-  Write-Display "  3. 设为 Enabled，保存并退出。"
-  Write-Display "  4. 进入 Windows 后重新启动本安装器。"
+  Write-Display "  3. Set to Enabled, save and exit."
+  Write-Display "  4. Boot back into Windows and re-launch this installer."
   Write-Display ""
-  Write-Display "详细帮助：https://aka.ms/enablevirtualization"
+  Write-Display "More help: https://aka.ms/enablevirtualization"
 }
 
 function Install-WslFeatures {
@@ -714,15 +714,15 @@ function Install-WslFeatures {
     try {
       $f = Get-WindowsOptionalFeature -Online -FeatureName $feat -ErrorAction Stop
       if ($f.State -eq 'Disabled') {
-        Write-Display "正在启用 Windows 功能：$feat …"
+        Write-Display "Enabling Windows feature: $feat …"
         if (-not $DryRun) {
           $r = Enable-WindowsOptionalFeature -Online -FeatureName $feat -NoRestart -ErrorAction Stop
           if ($r.RestartNeeded) { $script:NeedsReboot = $true }
         }
       }
     } catch {
-      Write-Err2 "启用 Windows 功能时出错：$feat — $_"
-      Write-Host "  请从管理员 PowerShell 手动运行："
+      Write-Err2 "Failed to enable Windows feature: $feat — $_"
+      Write-Host "  Run manually from an elevated PowerShell:"
       Write-Host "    wsl --install" -ForegroundColor Yellow
       exit 3
     }
@@ -736,10 +736,10 @@ function Ensure-WslInstalled {
   # in which case `wsl --install -d <distro>` later fails with
   # HCS_E_HYPERV_NOT_INSTALLED. Install-WslFeatures is idempotent (only acts on
   # features in Disabled state) so it's cheap to call unconditionally.
-  Write-Display "正在检查 Windows 子系统功能…"
+  Write-Display "Checking Windows Subsystem features…"
   Install-WslFeatures
   if ($script:NeedsReboot) {
-    Write-Display "已启用所需 Windows 功能，需要重启 Windows 才能继续。"
+    Write-Display "Required Windows features enabled — a Windows reboot is required to continue."
     Emit-RebootSentinel 'wsl-feature'
     exit 2
   }
@@ -756,7 +756,7 @@ function Ensure-WslInstalled {
     Write-Step "wsl.exe found on PATH and functional."
     return
   }
-  Write-Display "WSL 功能已就绪，正在补齐运行时…"
+  Write-Display "WSL feature is ready; installing the runtime…"
   # Features are already enabled (e.g. user already rebooted earlier) but the
   # kernel / store-side WSL package may still be missing. `wsl --install` with
   # no -d argument installs the WSL runtime (kernel + store package) without
@@ -765,22 +765,25 @@ function Ensure-WslInstalled {
   #   * --web-download : download via HTTPS instead of Microsoft Store UI
   $wslArgs = @('--install', '--no-launch')
   if (Test-WslWebDownloadSupport) { $wslArgs += '--web-download' }
-  Write-Display "正在安装 WSL 运行时（后台下载，无需用户交互）…"
+  Write-Display "Installing WSL runtime (background download, no user interaction required)…"
   Write-Log "Running: wsl.exe $($wslArgs -join ' ')"
   if (-not $DryRun) {
     $r = Invoke-Wsl $wslArgs
     Write-Log "wsl --install stdout: $($r.Stdout)"
     Write-Log "wsl --install stderr: $($r.Stderr)"
     if (($r.Stdout + $r.Stderr) -match 'restart|reboot|重启|重新启动') {
+      # The regex still matches CJK words because older wsl.exe builds emit
+      # Chinese-localized "请重启" / "需重新启动" messages on zh-CN Windows;
+      # we keep both forms so reboot detection works across locales.
       $script:NeedsReboot = $true
     }
     if ($r.ExitCode -ne 0 -and -not $script:NeedsReboot) {
-      Write-Err2 "wsl --install 失败 (exit $($r.ExitCode))：$($r.Stderr)"
+      Write-Err2 "wsl --install failed (exit $($r.ExitCode)): $($r.Stderr)"
       exit 3
     }
   }
   if ($script:NeedsReboot) {
-    Write-Display "WSL 安装完成，需要重启 Windows 才能继续。"
+    Write-Display "WSL installed — a Windows reboot is required to continue."
     Emit-RebootSentinel 'wsl-feature'
     exit 2
   }
@@ -842,7 +845,7 @@ function Ensure-Distro {
   # --web-download avoids the Microsoft Store progress window.
   $wslArgs = @('--install', '-d', $Name, '--no-launch')
   if (Test-WslWebDownloadSupport) { $wslArgs += '--web-download' }
-  Write-Display "正在后台下载并安装 WSL 发行版 $Name …"
+  Write-Display "Downloading and installing WSL distro $Name in the background…"
   Write-Log "Running: wsl.exe $($wslArgs -join ' ')"
   if (-not $DryRun) {
     $r = Invoke-Wsl $wslArgs
@@ -855,25 +858,25 @@ function Ensure-Distro {
         # causes. Only route to "fix BIOS" if no hypervisor is running; if
         # one is, BIOS is on and the issue lies in VMP / bcdedit / WSL itself.
         if (Test-HypervisorRunning) {
-          Write-Display "WSL 2 启动失败，但 Hyper-V hypervisor 已在运行（BIOS 虚拟化已启用）。"
-          Write-Display "请检查 VirtualMachinePlatform 功能与 bcdedit hypervisorlaunchtype 设置，"
-          Write-Display "或在管理员 PowerShell 跑：wsl --update --web-download"
+          Write-Display "WSL 2 failed to start, but the Hyper-V hypervisor is running (BIOS virtualization is enabled)."
+          Write-Display "Check the VirtualMachinePlatform feature and the bcdedit hypervisorlaunchtype setting,"
+          Write-Display "or run from an elevated PowerShell: wsl --update --web-download"
           exit 3
         }
         Show-FirmwareVirtualizationHelp
         exit 5
       }
-      Write-Err2 "wsl --install -d $Name 失败 (exit $($r.ExitCode))：$($r.Stderr)"
+      Write-Err2 "wsl --install -d $Name failed (exit $($r.ExitCode)): $($r.Stderr)"
       exit 3
     }
   }
   # Boot the distro once as root to materialize the rootfs WITHOUT triggering
   # Ubuntu's interactive OOBE (which is the thing that opens a console window
   # asking for username/password). Subsequent operations all use `-u root`.
-  Write-Display "正在初始化 $Name 环境（无需用户输入）…"
+  Write-Display "Initializing $Name environment (no user input required)…"
   $r2 = Invoke-Wsl @('-d', $Name, '-u', 'root', '--', '/bin/true')
   Write-Log "First boot (root) exit code: $($r2.ExitCode)"
-  Write-Step "WSL 发行版 $Name 已就绪。"
+  Write-Step "WSL distro $Name is ready."
 }
 
 # Make sure new distros default to WSL 2 (cheap, idempotent).
@@ -1034,7 +1037,7 @@ mkdir -p "`$(dirname '$wslSessionLog')"
 cd "$DestDir"
 $entryPoint $debugFlag
 "@
-  Write-Display "正在 WSL（$Name）中运行安装程序…"
+  Write-Display "Running installer inside WSL ($Name)…"
   Write-Log "Session log (inside WSL): $wslSessionLog"
   if ($forward.Count -gt 0) {
     Write-Log "Forwarding env vars:"
@@ -1043,7 +1046,7 @@ $entryPoint $debugFlag
   if ($DryRun) { Write-Host "  [dry-run] wsl -d $Name -- bash -lc <run installer>"; return 0 }
 
   if ($DebugMode) {
-    Write-Display "日志文件（WSL 内）：$wslSessionLog"
+    Write-Display "Log file (inside WSL): $wslSessionLog"
   }
 
   return Invoke-WslBashStreamed -Name $Name -Script $script -Login
@@ -1080,7 +1083,7 @@ mkdir -p "`$(dirname '$wslSessionLog')"
 cd "$DestDir"
 ./uninstall.sh --yes $debugFlag
 "@
-  Write-Display "正在 WSL（$Name）中运行卸载程序…"
+  Write-Display "Running uninstaller inside WSL ($Name)…"
   Write-Log "Session log (inside WSL): $wslSessionLog"
   if ($DryRun) { Write-Host "  [dry-run] wsl -d $Name -- bash <run uninstaller>"; return 0 }
 
@@ -1130,7 +1133,7 @@ mkdir -p "`$(dirname '$wslSessionLog')"
 cd "$DestDir"
 ./agents/$AgentName/$ServiceAction.sh
 "@
-  Write-Display "正在 WSL（$Name）中执行 $AgentName $ServiceAction…"
+  Write-Display "Running $AgentName $ServiceAction inside WSL ($Name)…"
   if ($DryRun) { Write-Host "  [dry-run] wsl -d $Name -- bash <$AgentName/$ServiceAction.sh>"; return 0 }
 
   return Invoke-WslBashStreamed -Name $Name -Script $script -Login
@@ -1205,7 +1208,7 @@ cd "$DestDir"
 ./agents/$AgentName/$OpName.sh $stdinRedir
 "@
 
-  Write-Display "正在 WSL（$Name）中执行 $AgentName/$OpName…"
+  Write-Display "Running $AgentName/$OpName inside WSL ($Name)…"
   if ($DryRun) { Write-Host "  [dry-run] wsl -d $Name -- bash <$AgentName/$OpName.sh>"; return 0 }
 
   return Invoke-WslBashStreamed -Name $Name -Script $script -Login -StdinB64 $stdinB64
@@ -1216,7 +1219,7 @@ cd "$DestDir"
 # -DebugMode: start background job to tail session log to host console.
 $DebugJob = $null
 if ($DebugMode) {
-  Write-Display "日志文件：$SessionLog"
+  Write-Display "Log file: $SessionLog"
   # Start a job that tails the Windows-side log (if the bash side writes to it).
   # Note: bash logs to the WSL-internal path; the Windows session log captures
   # PowerShell-side output only.
@@ -1344,7 +1347,7 @@ try {
   # mode for the "Install WSL" banner button: provision WSL/distro and let
   # the user re-trigger the agent install afterwards.
   if ($InstallWslOnly) {
-    Write-Display "✓ WSL 与发行版已就绪"
+    Write-Display "✓ WSL and distro are ready"
     exit 0
   }
 
@@ -1381,7 +1384,7 @@ try {
 
   Write-Host ""
   if ($rc -eq 0) {
-    Write-Display "✓ 安装完成"
+    Write-Display "✓ Install complete"
     Write-Log "From this Windows host:"
     Write-Log "  • Open http://localhost:18789/ — WSL 2 forwards localhost to the gateway"
     Write-Log "  • Browse install state at: \\wsl.localhost\$Distro\home\<user>\.claw-installer\"
@@ -1397,7 +1400,7 @@ try {
 } catch {
   # Without this catch any terminating error (e.g. CommandNotFoundException when
   # wsl.exe isn't on PATH yet) exits the script with code 1 and prints nothing
-  # the GUI can capture — the user sees "退出码 1" with no clue why. We do two
+  # the GUI can capture — the user sees "exit code 1" with no clue why. We do two
   # things here:
   #   1. Surface the full record into the [debug] log so install-<ts>.log
   #      contains the technical detail for triage.
@@ -1424,34 +1427,34 @@ try {
     # (VirtualMachinePlatform feature, hypervisorlaunchtype, corrupt WSL)
     # instead of having them reboot into UEFI for no reason.
     if (Test-HypervisorRunning) {
-      Write-Display "WSL 2 启动失败，但 Hyper-V hypervisor 已在运行（BIOS 虚拟化已启用）。"
+      Write-Display "WSL 2 failed to start, but the Hyper-V hypervisor is running (BIOS virtualization is enabled)."
       Write-Display ""
-      Write-Display "可能原因（按概率）："
-      Write-Display "  1. VirtualMachinePlatform Windows 功能未启用 — 在管理员 PowerShell 跑："
+      Write-Display "Likely causes (in probability order):"
+      Write-Display "  1. VirtualMachinePlatform Windows feature is disabled — run from elevated PowerShell:"
       Write-Display "       Enable-WindowsOptionalFeature -Online -FeatureName VirtualMachinePlatform"
-      Write-Display "       然后重启。"
-      Write-Display "  2. Hypervisor 启动类型不是 Auto — 检查："
+      Write-Display "       then reboot."
+      Write-Display "  2. Hypervisor launch type is not Auto — check with:"
       Write-Display "       bcdedit /enum | findstr hypervisorlaunchtype"
-      Write-Display "       若非 Auto，跑：bcdedit /set hypervisorlaunchtype auto"
-      Write-Display "  3. WSL 组件损坏 — 跑：wsl --update --web-download"
+      Write-Display "       if not Auto, run: bcdedit /set hypervisorlaunchtype auto"
+      Write-Display "  3. WSL components are corrupted — run: wsl --update --web-download"
       exit 3
     }
     Show-FirmwareVirtualizationHelp
     exit 5
   }
   if ($needle -match 'CommandNotFoundException.*wsl' -or $needle -match "'wsl(\.exe)?' is not recognized") {
-    Write-Display "未检测到 WSL 命令 — Windows 子系统功能可能尚未启用，请按提示重启电脑后重试。"
+    Write-Display "wsl command not found — the Windows Subsystem feature may not be enabled yet. Reboot as prompted and retry."
     exit 3
   }
   if ($needle -match 'The operation was canceled by the user' -or $needle -match '0x800704C7') {
-    Write-Display '操作已取消（UAC 弹窗中点了「取消」或「否」）。'
+    Write-Display 'Operation cancelled (Cancel/No clicked in the UAC prompt).'
     exit 4
   }
 
   # Generic fallback — keep it plain-language, not "Exception type / Stack
   # trace…". The technical detail already landed in the [debug] log above.
-  Write-Display ("安装中途遇到未预期的错误：{0}" -f $msg)
-  Write-Display '完整堆栈与上下文已写入会话日志（GUI 错误条下方的「完整日志」路径）。'
+  Write-Display ("Unexpected error during install: {0}" -f $msg)
+  Write-Display 'Full stack trace and context are in the session log (see the "Full log" path under the GUI error bar).'
   exit 1
 } finally {
   # Stop the debug tailing job on script exit (success or failure).

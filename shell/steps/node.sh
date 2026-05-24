@@ -7,8 +7,8 @@ __STEP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$__STEP_DIR/../lib/common.sh"
 
 step_node() {
-  display "@@step:node:正在配置 Node ${NODE_VERSION} 运行时…"
-  command -v fnm >/dev/null 2>&1 || die_step "配置 Node" "fnm not on PATH — run steps/fnm.sh first" 1
+  display "@@step:node:Configuring Node ${NODE_VERSION} runtime…"
+  command -v fnm >/dev/null 2>&1 || die_step "Configure Node" "fnm not on PATH — run steps/fnm.sh first" 1
 
   local req_major node_status="installed"
   req_major="${NODE_VERSION%%.*}"
@@ -66,9 +66,9 @@ step_node() {
     # but the user should know their brew install is corrupt so they can
     # repair it for non-installer use (interactive shell, other tools).
     if [[ "$am_rc" -ne 0 && -n "$active_path" ]]; then
-      display "⚠ 检测到 PATH 上的 node 已损坏：$active_path (退出码 $am_rc)"
-      display "  ↳ 安装程序会用 fnm 管理的 Node 覆盖；但建议在终端里手动修复："
-      display "    brew reinstall node          # 或 brew unlink node 让 fnm 接管"
+      display "⚠ Broken node detected on PATH: $active_path (exit $am_rc)"
+      display "  ↳ The installer will shadow it with the fnm-managed Node; we still recommend fixing the broken install manually:"
+      display "    brew reinstall node          # or 'brew unlink node' so fnm wins outright"
     fi
   else
     log "Active node before install: <not on PATH>"
@@ -76,7 +76,7 @@ step_node() {
 
   if [[ "$node_status" == "preexisting" && "$active_major" == "$req_major" \
         && -z "${INSTALLER_FORCE_REINSTALL:-}" ]]; then
-    display "Node v$NODE_VERSION 已安装并激活，跳过"
+    display "Node v$NODE_VERSION already installed and active; skipping"
   else
     log "Installing Node.js v$NODE_VERSION via fnm"
     run fnm install "$NODE_VERSION"
@@ -102,11 +102,11 @@ step_node() {
     if [[ -e "$node_path" ]]; then
       bin_info="$(file "$node_path" 2>/dev/null || true)"
     fi
-    die_step "配置 Node 运行时" \
-      "node --version 退出码 $probe_rc — 二进制不可执行 (path=$node_path; info=${bin_info:-N/A}; output=$node_v). 请删除 $fnm_dir/node-versions/ 后重试，或改用 INSTALLER_NODE_VERSION=22。" \
+    die_step "Configure Node runtime" \
+      "node --version exited $probe_rc — binary not executable (path=$node_path; info=${bin_info:-N/A}; output=$node_v). Remove $fnm_dir/node-versions/ and retry, or set INSTALLER_NODE_VERSION=22." \
       "$probe_rc"
   fi
-  display "✓ Node $node_v 已激活"
+  display "✓ Node $node_v active"
 
   # Version-gate check. Capture rc explicitly (don't rely on `if !` which
   # disables the ERR trap, *and* don't rely on the ERR trap fd-3 flush quirks).
@@ -115,8 +115,8 @@ step_node() {
     || check_rc=$?
   log "Node version gate check: rc=$check_rc (required >= 22.16)"
   if [[ "$check_rc" -ne 0 ]]; then
-    die_step "配置 Node 运行时" \
-      "Node $node_v 低于 22.16 最低版本 (退出码 $check_rc)。请设 INSTALLER_NODE_VERSION=24。" \
+    die_step "Configure Node runtime" \
+      "Node $node_v is below the 22.16 minimum (exit $check_rc). Set INSTALLER_NODE_VERSION=24." \
       "$check_rc"
   fi
   manifest_record fnm_node "$NODE_VERSION" "$node_status" "active=$node_v"
