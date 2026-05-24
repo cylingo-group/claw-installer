@@ -39,7 +39,7 @@ import {
   applyOpenclawModelConfig,
   openExternalUrl,
   pairBubbolink,
-  writeModelConfigs,
+  persistConfigSnapshot,
 } from "@/api/installer";
 import {
   buildHermesPlan,
@@ -383,23 +383,17 @@ function useModelSaveController(agent: AgentState) {
         });
       }
       // Persist the GUI's per-agent AgentConfig snapshot so a restart doesn't
-      // wipe badges, input fields, or the active channel / pair-at timestamp.
-      // Read fresh state from the store after the updateAgentConfig above
-      // (Zustand set is synchronous).
+      // wipe badges, input fields, the active channel / pair-at timestamp,
+      // or the persisted UI language. persistConfigSnapshot reads fresh
+      // store + i18n state, so we get all three for free (Zustand set is
+      // synchronous; the updateAgentConfig above has already landed).
       try {
-        const agents = useInstaller.getState().agents;
-        await writeModelConfigs({
-          version: 2,
-          agents: {
-            openclaw: agents.openclaw.config,
-            hermes: agents.hermes.config,
-          },
-        });
+        await persistConfigSnapshot();
       } catch (persistErr) {
         // Persistence failure shouldn't block the save success path — the
         // CLI write already succeeded. Surface it in the console so we can
         // find it during dev without disrupting the user.
-        console.warn("[onSave] writeModelConfigs failed:", persistErr);
+        console.warn("[onSave] persistConfigSnapshot failed:", persistErr);
       }
       setSaveState({ kind: "saved", at: now });
     } catch (err) {
@@ -1319,18 +1313,12 @@ function BubboLinkCard({ agent }: { agent: AgentState }) {
         bubbolinkPairedAt: now,
       });
       // Persist immediately so a crash before the next Save doesn't lose the
-      // pair state. Read fresh store snapshot (Zustand set is synchronous).
+      // pair state. persistConfigSnapshot also captures the active language
+      // so this never silently downgrades the user back to OS detection.
       try {
-        const agents = useInstaller.getState().agents;
-        await writeModelConfigs({
-          version: 2,
-          agents: {
-            openclaw: agents.openclaw.config,
-            hermes: agents.hermes.config,
-          },
-        });
+        await persistConfigSnapshot();
       } catch (persistErr) {
-        console.warn("[onPair] writeModelConfigs failed:", persistErr);
+        console.warn("[onPair] persistConfigSnapshot failed:", persistErr);
       }
       setState({ kind: "idle" });
       setCode("");

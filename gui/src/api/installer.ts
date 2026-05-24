@@ -16,17 +16,20 @@ import type {
 /**
  * Persisted shape mirrored to ~/.claw-installer/config.json (resp.
  * %APPDATA%\claw-installer\config.json on Windows) so the GUI's "configured" /
- * "paired" badges + input fields survive across restarts. Owned by the TS
- * side; Rust treats the payload as opaque JSON.
+ * "paired" badges + input fields, plus the UI language, survive across
+ * restarts. Owned by the TS side; Rust treats the payload as opaque JSON.
  *
  * v1 (legacy): `agents.<id>` held a bare ModelConfig — read by
  * hydrateAgentConfig's legacy branch.
  * v2 (current): `agents.<id>` holds the full AgentConfig (model + channel +
- * bubbolinkPairedAt).
+ * bubbolinkPairedAt). Top-level `language` (added later) is optional — when
+ * absent we fall back to OS-locale detection.
  */
 export interface ModelConfigSnapshot {
   version: 2;
   agents: Partial<Record<AgentId, AgentConfig>>;
+  /** "en" | "zh" — see gui/src/i18n. Omitted means "follow system locale". */
+  language?: string;
 }
 
 export interface InstallerStatePayload {
@@ -144,6 +147,38 @@ export async function writeModelConfigs(
   payload: ModelConfigSnapshot,
 ): Promise<void> {
   return invoke("write_model_configs", { payload });
+}
+
+/**
+ * Build a complete snapshot payload from the live store + live i18n state and
+ * persist it. Use this instead of constructing a ModelConfigSnapshot literal
+ * in callers, so every write captures BOTH the agents AND the current UI
+ * language. Without this, a model-save or BubboLink-pair flow that builds the
+ * payload itself would silently drop the persisted `language` field and
+ * revert the user back to OS-locale detection on the next launch.
+ *
+ * Reads:
+ *   - useInstaller.getState().agents — for agents config
+ *   - i18n.resolvedLanguage — for the current UI language
+ *
+ * Imports are dynamic to avoid a circular module dep between api/installer.ts
+ * and store/installer-store.ts.
+ */
+export async function persistConfigSnapshot(): Promise<void> {
+  if (!IS_TAURI_ENV_LOCAL) return;
+  const [{ useInstaller }, { default: i18n, shortLang }] = await Promise.all([
+    import("@/store/installer-store"),
+    import("@/i18n"),
+  ]);
+  const agents = useInstaller.getState().agents;
+  await writeModelConfigs({
+    version: 2,
+    agents: {
+      openclaw: agents.openclaw.config,
+      hermes: agents.hermes.config,
+    },
+    language: shortLang(i18n.resolvedLanguage ?? i18n.language),
+  });
 }
 
 export async function runUninstaller(

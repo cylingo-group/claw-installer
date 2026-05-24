@@ -930,6 +930,14 @@ export const useInstaller = create<State>((set, get) => ({
           }),
         ]);
         const persistedAgents = snapshot?.agents ?? {};
+        // Apply the persisted UI language BEFORE flipping React state so the
+        // first paint of post-bootstrap content reads the correct locale.
+        // Imported dynamically to keep the i18n module out of the test bundle
+        // path that runs in jsdom without a configured i18n instance.
+        if (snapshot?.language) {
+          const { applyPersistedLanguage } = await import("@/i18n");
+          applyPersistedLanguage(snapshot.language);
+        }
         set((s) => ({
           agents: {
             ...s.agents,

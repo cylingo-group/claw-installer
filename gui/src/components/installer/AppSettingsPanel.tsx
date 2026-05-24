@@ -1,5 +1,10 @@
 import { useTranslation } from "react-i18next";
-import { useInstaller, type MirrorSource } from "@/store/installer-store";
+import {
+  useInstaller,
+  IS_TAURI_ENV,
+  type MirrorSource,
+} from "@/store/installer-store";
+import { persistConfigSnapshot } from "@/api/installer";
 import { cn } from "@/lib/utils";
 import { SUPPORTED_LANGUAGES, shortLang, type Lang } from "@/i18n";
 
@@ -38,8 +43,22 @@ export function AppSettingsPanel() {
   const updateSettings = useInstaller((s) => s.updateSettings);
 
   const currentLang = shortLang(i18n.resolvedLanguage ?? i18n.language);
-  const setLang = (lang: Lang) => {
-    void i18n.changeLanguage(lang);
+  const setLang = async (lang: Lang) => {
+    // Change language FIRST so persistConfigSnapshot below reads the new
+    // value from i18n.resolvedLanguage. The order matters — Zustand set is
+    // synchronous, but i18next's changeLanguage is async, so we await.
+    await i18n.changeLanguage(lang);
+    // Persist to config.json — config.json is the single source of truth for
+    // the user's chosen language across restarts (no localStorage).
+    // persistConfigSnapshot bundles agents + language so we never clobber
+    // model/channel/pair state by overwriting the file.
+    if (IS_TAURI_ENV) {
+      try {
+        await persistConfigSnapshot();
+      } catch (err) {
+        console.warn("[AppSettingsPanel] persist language failed:", err);
+      }
+    }
   };
 
   return (
@@ -157,7 +176,7 @@ export function AppSettingsPanel() {
                     name="ui-language"
                     value={lang}
                     checked={selected}
-                    onChange={() => setLang(lang)}
+                    onChange={() => void setLang(lang)}
                     className="h-3.5 w-3.5 shrink-0 accent-accent"
                   />
                   <span
