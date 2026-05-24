@@ -36,9 +36,43 @@ export function LogStrip() {
         (a) => a.status === "installing" || a.status === "uninstalling"
       )
   );
+  // Resolve "which agent owns the current step" once per render. Mirrors
+  // `handleInstallerEvent`'s "step belongs to queue[0]" rule; falls back to
+  // whichever agent is currently transitioning when no install queue exists
+  // (lifecycle start/stop also emits StepChanged via runLifecycle).
+  // Selectors return primitives only so zustand's Object.is comparison
+  // doesn't trigger spurious re-renders.
+  const activeStepLabel = useInstaller((s) => {
+    const headId =
+      s.installQueue[0] ??
+      (Object.keys(s.agents).find(
+        (id) =>
+          s.agents[id as keyof typeof s.agents].status === "installing" ||
+          s.agents[id as keyof typeof s.agents].status === "uninstalling"
+      ) as keyof typeof s.agents | undefined);
+    return headId ? s.agents[headId].currentStep : null;
+  });
+  const activeStepStartedAt = useInstaller((s) => {
+    const headId =
+      s.installQueue[0] ??
+      (Object.keys(s.agents).find(
+        (id) =>
+          s.agents[id as keyof typeof s.agents].status === "installing" ||
+          s.agents[id as keyof typeof s.agents].status === "uninstalling"
+      ) as keyof typeof s.agents | undefined);
+    return headId ? s.agents[headId].currentStepStartedAt : null;
+  });
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const [copyHint, setCopyHint] = useState<"idle" | "ok" | "err">("idle");
+  // 1Hz tick to refresh the elapsed-time chip. Only schedules an interval
+  // while there IS a step in progress, so idle sessions don't pay for it.
+  const [, setTickNow] = useState(Date.now());
+  useEffect(() => {
+    if (!activeStepLabel || activeStepStartedAt === null) return;
+    const id = setInterval(() => setTickNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [activeStepLabel, activeStepStartedAt]);
 
   // Auto-scroll to bottom whenever a new line arrives and the panel is open.
   useEffect(() => {
@@ -88,20 +122,33 @@ export function LogStrip() {
         aria-label={logExpanded ? "收起执行日志" : "展开执行日志"}
         className="flex w-full items-center justify-between px-3 py-1.5 transition-colors hover:bg-foreground/[0.02]"
       >
-        <span className="flex items-center gap-2">
+        <span className="flex min-w-0 flex-1 items-center gap-2">
           <Chevron open={logExpanded} />
-          <span className="text-[10px] font-medium uppercase tracking-wide text-muted" lang="en">
+          <span className="shrink-0 text-[10px] font-medium uppercase tracking-wide text-muted" lang="en">
             执行日志
           </span>
           {transitioning && (
-            <span className="relative inline-flex h-1.5 w-1.5">
+            <span className="relative inline-flex h-1.5 w-1.5 shrink-0">
               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-accent opacity-60" />
               <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-accent" />
             </span>
           )}
+          {activeStepLabel && (
+            <span
+              className="min-w-0 truncate text-[11px] text-foreground/90"
+              title={activeStepLabel}
+            >
+              {activeStepLabel}
+            </span>
+          )}
+          {activeStepLabel && activeStepStartedAt !== null && (
+            <span className="shrink-0 text-[10px] text-muted tabular-nums" lang="en">
+              <ElapsedSince startedAt={activeStepStartedAt} />
+            </span>
+          )}
           {logTail.length > 0 && (
-            <span className="text-[10px] text-muted/70 tabular-nums" lang="en">
-              {logTail.length}
+            <span className="shrink-0 text-[10px] text-muted/70 tabular-nums" lang="en">
+              · {logTail.length} 行
             </span>
           )}
         </span>
@@ -158,6 +205,21 @@ export function LogStrip() {
       </div>
     </div>
   );
+}
+
+/**
+ * Live-updating elapsed-time text for the LogStrip header chip. Formats as
+ * `Ns` under 60s, `Mm Ss` for 60s–60min, and `Hh Mm` beyond an hour — keeps
+ * the chip narrow even on very long install steps. Refresh cadence is driven
+ * by the parent's 1Hz tick (so we don't schedule a second timer here).
+ */
+function ElapsedSince({ startedAt }: { startedAt: number }) {
+  const sec = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
+  let text: string;
+  if (sec < 60) text = `${sec}s`;
+  else if (sec < 3600) text = `${Math.floor(sec / 60)}m ${sec % 60}s`;
+  else text = `${Math.floor(sec / 3600)}h ${Math.floor((sec % 3600) / 60)}m`;
+  return <>{text}</>;
 }
 
 /** Tokenize a line and wrap *.log absolute paths in a click-to-open button. */

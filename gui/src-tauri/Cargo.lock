@@ -503,6 +503,7 @@ name = "claw-gui"
 version = "1.0.0"
 dependencies = [
  "base64 0.22.1",
+ "libc",
  "regex",
  "serde",
  "serde_json",

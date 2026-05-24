@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import {
   BrainCircuit,
   ChevronDown,
@@ -133,15 +133,44 @@ function activeProviderSummary(draft: ModelDraft): string {
 }
 
 // ---- Channel shape ------------------------------------------------------------
+//
+// v4: 通道不再是 4 选 1。BubboLink 是 GUI 内可直接完成配对的"动作通道"；
+// 微信 / 飞书 / 钉钉 是"参考文档通道"（用户到上游平台自己配）。L1 卡的
+// summary 反映 BubboLink 配对状态。详见 .ued/brief.md §v4。
 
 type ChannelId = "wechat" | "feishu" | "dingtalk" | "bubbolink";
-const CHANNEL_IDS: ChannelId[] = ["wechat", "feishu", "dingtalk", "bubbolink"];
 const CHANNEL_LABELS: Record<ChannelId, string> = {
   wechat: "微信",
   feishu: "飞书",
   dingtalk: "钉钉",
   bubbolink: "BubboLink",
 };
+
+interface DocChannelMeta {
+  id: Exclude<ChannelId, "bubbolink">;
+  docsUrl: string;
+  blurb: string;
+}
+
+const DOC_CHANNELS: DocChannelMeta[] = [
+  {
+    id: "wechat",
+    docsUrl: "https://docs.openclaw.ai/channels/wechat",
+    blurb: "OpenClaw 个人微信接入指南",
+  },
+  {
+    id: "feishu",
+    docsUrl: "https://docs.openclaw.ai/channels/feishu",
+    blurb: "OpenClaw 飞书 / Lark 接入指南",
+  },
+  {
+    id: "dingtalk",
+    docsUrl: "https://github.com/DingTalk-Real-AI/dingtalk-openclaw-connector",
+    blurb: "官方 OpenClaw 钉钉 Channel 插件",
+  },
+];
+
+const BUBBOLINK_INTRO_URL = "https://www.npmjs.com/package/@bubbolink/cli";
 
 // ---- Navigation ---------------------------------------------------------------
 
@@ -155,12 +184,12 @@ type View =
 function RootPage({
   agentName,
   draft,
-  channel,
+  paired,
   go,
 }: {
   agentName: string;
   draft: ModelDraft;
-  channel: ChannelId;
+  paired: boolean;
   go: (v: View) => void;
 }) {
   return (
@@ -175,7 +204,7 @@ function RootPage({
       <SectionCard
         icon={<MessageSquare className="h-3.5 w-3.5" />}
         title="通道配置"
-        summary={`当前：${CHANNEL_LABELS[channel]}`}
+        summary={paired ? "BubboLink · 已配对" : "BubboLink · 未配对"}
         onClick={() => go({ kind: "channel" })}
       />
       <p className="pt-1 text-[10px] text-muted" lang="en">
@@ -685,47 +714,282 @@ function ProviderDot({ active }: { active: boolean }) {
 }
 
 // ---- L2: channel page ---------------------------------------------------------
+//
+// Layout (v4): BubboLink on top with accent outline + "推荐" badge — the only
+// channel actually configurable in-GUI. Below: 3 doc-link cards (微信/飞书/钉钉)
+// that just open external docs in the system browser.
 
 function ChannelPage({
-  channel,
-  setChannel,
+  paired,
+  onPair,
 }: {
-  channel: ChannelId;
-  setChannel: (c: ChannelId) => void;
+  paired: boolean;
+  onPair: () => void;
 }) {
   return (
-    <div role="radiogroup" aria-label="IM 通道" className="space-y-2">
-      {CHANNEL_IDS.map((id) => {
-        const selected = channel === id;
-        return (
-          <label
-            key={id}
-            className={cn(
-              "flex cursor-pointer items-center gap-3 rounded-md border px-3.5 py-2.5 transition-colors",
-              selected
-                ? "border-accent bg-accent/[0.04]"
-                : "border-border hover:border-foreground/30",
-            )}
-          >
-            <input
-              type="radio"
-              name="channel"
-              value={id}
-              checked={selected}
-              onChange={() => setChannel(id)}
-              className="h-3.5 w-3.5 shrink-0 accent-accent"
-            />
-            <span
-              className={cn(
-                "text-sm font-medium",
-                selected ? "text-accent" : "text-foreground",
+    <div className="space-y-2.5">
+      <BubboLinkCard paired={paired} onPair={onPair} />
+      {DOC_CHANNELS.map((c) => (
+        <DocChannelCard key={c.id} channel={c} />
+      ))}
+    </div>
+  );
+}
+
+function DocChannelCard({ channel }: { channel: DocChannelMeta }) {
+  return (
+    <button
+      type="button"
+      onClick={() => window.open(channel.docsUrl, "_blank", "noopener")}
+      className={cn(
+        "flex w-full items-center gap-3 rounded-md border border-border bg-surface px-3.5 py-3 text-left transition-colors",
+        "hover:border-foreground/30 hover:bg-background",
+      )}
+    >
+      <span className="min-w-0 flex-1 leading-tight">
+        <span className="block text-sm font-medium text-foreground">
+          {CHANNEL_LABELS[channel.id]}
+        </span>
+        <span className="mt-0.5 block truncate text-[11px] text-muted">
+          {channel.blurb}
+        </span>
+      </span>
+      <ExternalLink className="h-3.5 w-3.5 shrink-0 text-muted" />
+    </button>
+  );
+}
+
+type PairState =
+  | { kind: "idle" }
+  | { kind: "pairing" }
+  | { kind: "error"; message: string };
+
+function BubboLinkCard({
+  paired,
+  onPair,
+}: {
+  paired: boolean;
+  onPair: () => void;
+}) {
+  const [code, setCode] = useState("");
+  const [state, setState] = useState<PairState>({ kind: "idle" });
+
+  const canPair = /^\d{4}$/.test(code) && state.kind !== "pairing";
+
+  // Prototype-only stub: simulate the bubbolink CLI roundtrip. Even pairs land
+  // as success; odd-sum codes fail so designers can preview the error state.
+  async function simulatePair() {
+    setState({ kind: "pairing" });
+    await new Promise((r) => setTimeout(r, 700));
+    const digits = code.split("").map((c) => Number.parseInt(c, 10));
+    const sum = digits.reduce((a, b) => a + b, 0);
+    if (sum % 2 === 1) {
+      setState({
+        kind: "error",
+        message: "pair-bubbolink: 配对码已过期，请回到 BubboLink App 重新生成",
+      });
+      return;
+    }
+    onPair();
+    setState({ kind: "idle" });
+    setCode("");
+  }
+
+  return (
+    <div
+      className={cn(
+        "overflow-hidden rounded-md border-2 transition-colors",
+        paired ? "border-success/40" : "border-accent",
+      )}
+    >
+      <div className="bg-gradient-to-r from-accent/[0.10] via-accent/[0.04] to-transparent px-3.5 py-3">
+        <div className="flex items-start gap-2">
+          <div className="min-w-0 flex-1 leading-tight">
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-semibold text-foreground">
+                {CHANNEL_LABELS.bubbolink}
+              </span>
+              <span className="inline-flex items-center gap-0.5 rounded-sm bg-accent px-1.5 py-0.5 text-[10px] font-medium text-surface">
+                <Sparkles className="h-2.5 w-2.5" />
+                推荐
+              </span>
+              {paired && (
+                <span className="rounded-sm bg-success/10 px-1.5 py-0.5 text-[10px] font-medium text-success">
+                  已配对
+                </span>
               )}
+            </div>
+            <p className="mt-0.5 text-[11px] leading-relaxed text-muted">
+              从 BubboLink App 读取 4 位配对码，在本机完成绑定。
+            </p>
+            <button
+              type="button"
+              onClick={() =>
+                window.open(BUBBOLINK_INTRO_URL, "_blank", "noopener")
+              }
+              className="mt-1 inline-flex items-center gap-1 text-[11px] text-accent hover:underline"
             >
-              {CHANNEL_LABELS[id]}
-            </span>
-          </label>
-        );
-      })}
+              何为 BubboLink？
+              <ExternalLink className="h-3 w-3" />
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div className="space-y-3 border-t border-border/60 bg-background/40 px-3.5 py-3.5">
+        <label className="block text-[11px] text-muted">
+          配对码<span aria-hidden className="ml-0.5 text-danger">*</span>
+        </label>
+        <div className="flex justify-center">
+          <OtpInput
+            length={4}
+            value={code}
+            onChange={(v) => {
+              setCode(v);
+              if (state.kind === "error") setState({ kind: "idle" });
+            }}
+            disabled={state.kind === "pairing"}
+          />
+        </div>
+        <button
+          type="button"
+          onClick={() => void simulatePair()}
+          disabled={!canPair}
+          className={cn(
+            "inline-flex w-full items-center justify-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+            canPair
+              ? "bg-accent text-surface hover:opacity-90"
+              : "cursor-not-allowed bg-foreground/10 text-muted",
+          )}
+        >
+          {state.kind === "pairing" ? (
+            <>
+              <span className="h-3 w-3 animate-spin rounded-full border border-surface/40 border-t-surface" />
+              配对中…
+            </>
+          ) : paired ? (
+            "重新配对"
+          ) : (
+            "配对"
+          )}
+        </button>
+        {state.kind === "error" && (
+          <pre className="mt-1 max-h-28 overflow-auto whitespace-pre-wrap rounded border border-danger/30 bg-danger/[0.04] px-2.5 py-2 font-mono text-[10.5px] leading-snug text-danger">
+            {state.message}
+          </pre>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Fixed-length OTP input: `length` separate single-digit cells, auto-advance
+ * on input, Backspace returns to the previous cell. `value` is the joined
+ * digit string (0..length chars). Non-digit input is silently dropped.
+ *
+ * UED v4: 加大 OTP 格 + 加粗间距 (h-12 w-12 / gap-2.5) per Phase-1 decision.
+ */
+function OtpInput({
+  length,
+  value,
+  onChange,
+  disabled,
+}: {
+  length: number;
+  value: string;
+  onChange: (next: string) => void;
+  disabled?: boolean;
+}) {
+  const refs = useRef<(HTMLInputElement | null)[]>([]);
+  const digits = Array.from({ length }, (_, i) => value[i] ?? "");
+
+  function setAt(i: number, ch: string) {
+    const arr = digits.slice();
+    arr[i] = ch;
+    onChange(arr.join("").slice(0, length));
+  }
+
+  function focusAt(i: number) {
+    const el = refs.current[i];
+    if (el) {
+      el.focus();
+      el.select();
+    }
+  }
+
+  function onCellChange(i: number, raw: string) {
+    const d = raw.replace(/\D+/g, "").slice(-1);
+    if (!d) return;
+    setAt(i, d);
+    if (i < length - 1) focusAt(i + 1);
+  }
+
+  function onCellKeyDown(
+    i: number,
+    e: React.KeyboardEvent<HTMLInputElement>,
+  ) {
+    if (e.key === "Backspace") {
+      e.preventDefault();
+      if (digits[i]) {
+        setAt(i, "");
+      } else if (i > 0) {
+        setAt(i - 1, "");
+        focusAt(i - 1);
+      }
+    } else if (e.key === "ArrowLeft" && i > 0) {
+      e.preventDefault();
+      focusAt(i - 1);
+    } else if (e.key === "ArrowRight" && i < length - 1) {
+      e.preventDefault();
+      focusAt(i + 1);
+    }
+  }
+
+  function onCellPaste(
+    i: number,
+    e: React.ClipboardEvent<HTMLInputElement>,
+  ) {
+    const txt = e.clipboardData.getData("text").replace(/\D+/g, "");
+    if (!txt) return;
+    e.preventDefault();
+    const arr = digits.slice();
+    let cursor = i;
+    for (const ch of txt) {
+      if (cursor >= length) break;
+      arr[cursor++] = ch;
+    }
+    onChange(arr.join("").slice(0, length));
+    focusAt(Math.min(cursor, length - 1));
+  }
+
+  return (
+    <div className="flex items-center gap-2.5">
+      {digits.map((d, i) => (
+        <input
+          key={i}
+          ref={(el) => {
+            refs.current[i] = el;
+          }}
+          type="text"
+          inputMode="numeric"
+          autoComplete="one-time-code"
+          maxLength={1}
+          value={d}
+          disabled={disabled}
+          onChange={(e) => onCellChange(i, e.target.value)}
+          onKeyDown={(e) => onCellKeyDown(i, e)}
+          onPaste={(e) => onCellPaste(i, e)}
+          onFocus={(e) => e.currentTarget.select()}
+          aria-label={`配对码第 ${i + 1} 位`}
+          className={cn(
+            "h-12 w-12 rounded-xl border-2 bg-background/60 text-center font-mono text-xl text-foreground caret-accent",
+            "transition-colors focus:border-accent focus:bg-surface focus:shadow-[0_0_0_4px_rgba(99,102,241,0.15)] focus:outline-none",
+            d ? "border-border" : "border-border/60",
+            disabled && "cursor-not-allowed opacity-60",
+          )}
+        />
+      ))}
     </div>
   );
 }
@@ -748,7 +1012,9 @@ export function SettingsPanel() {
   const open = Boolean(target && agent);
 
   const [draft, setDraft] = useState<ModelDraft>(initialDraft);
-  const [channel, setChannel] = useState<ChannelId>("wechat");
+  const [bubbolinkPairedAt, setBubbolinkPairedAt] = useState<number | null>(
+    null,
+  );
   const [view, setView] = useState<View>({ kind: "root" });
 
   const agentName = agent?.name ?? "Agent";
@@ -808,7 +1074,7 @@ export function SettingsPanel() {
             <RootPage
               agentName={agentName}
               draft={draft}
-              channel={channel}
+              paired={bubbolinkPairedAt !== null}
               go={setView}
             />
           )}
@@ -816,7 +1082,10 @@ export function SettingsPanel() {
             <ModelPage draft={draft} setDraft={setDraft} />
           )}
           {view.kind === "channel" && (
-            <ChannelPage channel={channel} setChannel={setChannel} />
+            <ChannelPage
+              paired={bubbolinkPairedAt !== null}
+              onPair={() => setBubbolinkPairedAt(Date.now())}
+            />
           )}
         </div>
       </div>

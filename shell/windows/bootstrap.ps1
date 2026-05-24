@@ -114,11 +114,22 @@ if (-not $env:CLAW_SESSION_LOG) {
   $env:CLAW_SESSION_LOG = [System.IO.Path]::Combine(
     [System.IO.Path]::GetTempPath(),
     'claw-installer',
+    'logs',
     "install-$_ts.log"
   )
 }
 $SessionLog = $env:CLAW_SESSION_LOG
 New-Item -ItemType Directory -Force -Path (Split-Path $SessionLog) | Out-Null
+
+# Canonical log dir for both the Windows side (where Rust + this script write)
+# and the WSL side (where bash writes after we translate the path via wslpath).
+# Computed once and reused below when we forward env to WSL bash invocations.
+$ClawLogDirWin = [System.IO.Path]::Combine(
+  [System.IO.Path]::GetTempPath(),
+  'claw-installer',
+  'logs'
+)
+New-Item -ItemType Directory -Force -Path $ClawLogDirWin | Out-Null
 # Touch the file now so the parent's tail loop has something to attach to
 # immediately (Get-Content -Wait can't track a path that doesn't exist yet
 # without a polling delay).
@@ -505,8 +516,12 @@ function Invoke-WslBashStreamed {
   # terminated with an extra newline — safe for binary payloads.
   # PS 5.1 note: no ??, no ternary; use explicit if/else throughout.
   if ($StdinB64 -ne '') {
+    # Stay inside WSL's own ext4 /tmp (not the Windows mount) so chmod 600
+    # actually takes effect — 9P silently drops Unix permission bits.
     $preamble = @"
-_op_stdin_tmp="/tmp/installer-op-stdin-`$`$-`$(date +%s%N 2>/dev/null || date +%s)"
+_op_stdin_dir="`${TMPDIR:-/tmp}/claw-installer/tmp"
+mkdir -p "`$_op_stdin_dir"
+_op_stdin_tmp="`$_op_stdin_dir/installer-op-stdin-`$`$-`$(date +%s%N 2>/dev/null || date +%s)"
 trap 'rm -f "`$_op_stdin_tmp"' EXIT
 printf '%s' __STDINB64__ | base64 -d > "`$_op_stdin_tmp"
 chmod 600 "`$_op_stdin_tmp"
@@ -982,10 +997,13 @@ echo "Copied to `$dest"
 function Invoke-BashInstaller {
   param([string]$Name, [string]$DestDir)
 
-  # Compute a Linux-compatible session log path inside WSL and pass it to bash.
-  # We use /tmp/claw-installer/ inside WSL (not the Windows $SessionLog path).
+  # Translate the Windows-side log dir (%TEMP%\claw-installer\logs\) to its WSL
+  # 9P mount path (/mnt/c/.../Temp/claw-installer/logs/) so bash inside WSL
+  # writes to the same physical files as the Rust/PowerShell side. Effect: all
+  # logs land in a single Explorer-visible directory.
+  $wslLogDir = ConvertTo-WslMountPath -WinPath $ClawLogDirWin
   $_lts = (Get-Date -Format 'yyyyMMddTHHmmssZ')
-  $wslSessionLog = "/tmp/claw-installer/install-$_lts.log"
+  $wslSessionLog = "$wslLogDir/install-$_lts.log"
 
   $entryPoint = if ($Agent) { "./agents/$Agent/install.sh" } else { "./install.sh" }
 
@@ -994,14 +1012,18 @@ function Invoke-BashInstaller {
     ($_.Name -like 'INSTALLER_*' -or $_.Name -like 'CLAW_*') -and
     $_.Name -ne 'INSTALLER_REPO_DIR' -and
     $_.Name -ne 'INSTALLER_WSL_DISTRO' -and
-    $_.Name -ne 'CLAW_SESSION_LOG'
+    $_.Name -ne 'CLAW_SESSION_LOG' -and
+    $_.Name -ne 'CLAW_LOG_DIR'
   } | ForEach-Object {
     # Single-quote escape: ' → '\''
     $v = $_.Value -replace "'", "'\''"
     $forward += ("export {0}='{1}'" -f $_.Name, $v)
   }
-  # Always forward CLAW_SESSION_LOG so bash scripts append to the same log.
+  # Always forward CLAW_SESSION_LOG + CLAW_LOG_DIR so bash scripts pick the
+  # Windows-side log dir (the WSL-side defaults would land in /tmp inside the
+  # distro vhdx and never become visible from Explorer).
   $forward += "export CLAW_SESSION_LOG='$wslSessionLog'"
+  $forward += "export CLAW_LOG_DIR='$wslLogDir'"
   $envBlock = $forward -join "`n"
 
   $debugFlag = if ($DebugMode) { '--debug' } else { '' }
@@ -1031,20 +1053,23 @@ $entryPoint $debugFlag
 function Invoke-BashUninstaller {
   param([string]$Name, [string]$DestDir)
 
+  $wslLogDir = ConvertTo-WslMountPath -WinPath $ClawLogDirWin
   $_lts = (Get-Date -Format 'yyyyMMddTHHmmssZ')
-  $wslSessionLog = "/tmp/claw-installer/uninstall-$_lts.log"
+  $wslSessionLog = "$wslLogDir/uninstall-$_lts.log"
 
   $forward = @()
   Get-ChildItem env: | Where-Object {
     ($_.Name -like 'INSTALLER_*' -or $_.Name -like 'CLAW_*') -and
     $_.Name -ne 'INSTALLER_REPO_DIR' -and
     $_.Name -ne 'INSTALLER_WSL_DISTRO' -and
-    $_.Name -ne 'CLAW_SESSION_LOG'
+    $_.Name -ne 'CLAW_SESSION_LOG' -and
+    $_.Name -ne 'CLAW_LOG_DIR'
   } | ForEach-Object {
     $v = $_.Value -replace "'", "'\''"
     $forward += ("export {0}='{1}'" -f $_.Name, $v)
   }
   $forward += "export CLAW_SESSION_LOG='$wslSessionLog'"
+  $forward += "export CLAW_LOG_DIR='$wslLogDir'"
   $envBlock = $forward -join "`n"
 
   $debugFlag = if ($DebugMode) { '--debug' } else { '' }
@@ -1079,20 +1104,23 @@ function Invoke-BashService {
     }
   }
 
+  $wslLogDir = ConvertTo-WslMountPath -WinPath $ClawLogDirWin
   $_lts = (Get-Date -Format 'yyyyMMddTHHmmssZ')
-  $wslSessionLog = "/tmp/claw-installer/$ServiceAction-$AgentName-$_lts.log"
+  $wslSessionLog = "$wslLogDir/$ServiceAction-$AgentName-$_lts.log"
 
   $forward = @()
   Get-ChildItem env: | Where-Object {
     ($_.Name -like 'INSTALLER_*' -or $_.Name -like 'CLAW_*') -and
     $_.Name -ne 'INSTALLER_REPO_DIR' -and
     $_.Name -ne 'INSTALLER_WSL_DISTRO' -and
-    $_.Name -ne 'CLAW_SESSION_LOG'
+    $_.Name -ne 'CLAW_SESSION_LOG' -and
+    $_.Name -ne 'CLAW_LOG_DIR'
   } | ForEach-Object {
     $v = $_.Value -replace "'", "'\''"
     $forward += ("export {0}='{1}'" -f $_.Name, $v)
   }
   $forward += "export CLAW_SESSION_LOG='$wslSessionLog'"
+  $forward += "export CLAW_LOG_DIR='$wslLogDir'"
   $envBlock = $forward -join "`n"
 
   $script = @"
@@ -1117,6 +1145,7 @@ $script:OpAgentTable = @{
   'open-dashboard'       = @('openclaw', 'hermes')
   'approve-latest-device' = @('openclaw')
   'find-dashboard-port'  = @('hermes')
+  'pair-bubbolink'       = @('openclaw', 'hermes')
 }
 
 function Invoke-OpDispatch {
@@ -1139,17 +1168,21 @@ function Invoke-OpDispatch {
   # Build env-block: forward INSTALLER_* / CLAW_* / INSTALLER_OP_* vars.
   # INSTALLER_OP_STDIN_B64 is NOT forwarded here (it is the transport; the
   # decoded content reaches the script via the temp file).
+  # CLAW_LOG_DIR is set explicitly below to the WSL mount of %TEMP%\claw-installer\logs.
+  $wslLogDir = ConvertTo-WslMountPath -WinPath $ClawLogDirWin
   $forward = @()
   Get-ChildItem env: | Where-Object {
     ($_.Name -like 'INSTALLER_*' -or $_.Name -like 'CLAW_*') -and
     $_.Name -ne 'INSTALLER_REPO_DIR' -and
     $_.Name -ne 'INSTALLER_WSL_DISTRO' -and
     $_.Name -ne 'CLAW_SESSION_LOG' -and
+    $_.Name -ne 'CLAW_LOG_DIR' -and
     $_.Name -ne 'INSTALLER_OP_STDIN_B64'
   } | ForEach-Object {
     $v = $_.Value -replace "'", "'\''"
     $forward += ("export {0}='{1}'" -f $_.Name, $v)
   }
+  $forward += "export CLAW_LOG_DIR='$wslLogDir'"
   $envBlock = $forward -join "`n"
 
   # Pull stdin payload (set by Rust dispatch_op before invoking powershell).

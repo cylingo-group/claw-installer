@@ -95,9 +95,11 @@ pub fn run() {
             commands::system_reboot,
             commands::apply_openclaw_model_config,
             commands::apply_hermes_model_config,
+            commands::pair_bubbolink,
             commands::read_model_configs,
             commands::write_model_configs,
             commands::get_logs_dir,
+            commands::frontend_log,
             // 4.5 — tray commands
             tray::tray_start_all_agents,
             tray::tray_stop_all_agents,

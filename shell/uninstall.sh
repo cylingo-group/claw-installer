@@ -113,7 +113,7 @@ strip_sentinel_block() {
     return
   fi
   local tmp
-  tmp="$(mktemp)"
+  tmp="$(mktemp -p "$(_claw_tmp_dir)")"
   awk -v b="$b" -v e="$e" '
     BEGIN { skip = 0 }
     $0 == b { skip = 1; next }
@@ -455,7 +455,7 @@ main() {
       # Rewrite manifest: keep header + every row that did NOT match the filter.
       # If nothing remains other than the header, drop the file too.
       local tmp keep
-      tmp="$(mktemp)"
+      tmp="$(mktemp -p "$(_claw_tmp_dir)")"
       keep=0
       while IFS= read -r line; do
         # Pass through comments / blank lines.

@@ -8,19 +8,25 @@
  */
 import { invoke, Channel } from "@tauri-apps/api/core";
 import type {
+  AgentConfig,
   AgentId,
   InstallerEvent,
-  ModelConfig,
 } from "@/store/installer-store";
 
 /**
- * Persisted shape mirrored to <app_config_dir>/model-config.json so the GUI's
- * "已配置" badge + input fields survive across restarts. Owned by the TS side;
- * Rust treats the payload as opaque JSON.
+ * Persisted shape mirrored to ~/.claw-installer/config.json (resp.
+ * %APPDATA%\claw-installer\config.json on Windows) so the GUI's "已配置" /
+ * "已配对" badges + input fields survive across restarts. Owned by the TS
+ * side; Rust treats the payload as opaque JSON.
+ *
+ * v1 (legacy): `agents.<id>` held a bare ModelConfig — read by
+ * hydrateAgentConfig's legacy branch.
+ * v2 (current): `agents.<id>` holds the full AgentConfig (model + channel +
+ * bubbolinkPairedAt).
  */
 export interface ModelConfigSnapshot {
-  version: 1;
-  agents: Partial<Record<AgentId, ModelConfig>>;
+  version: 2;
+  agents: Partial<Record<AgentId, AgentConfig>>;
 }
 
 export interface InstallerStatePayload {
@@ -112,6 +118,26 @@ export async function readModelConfigs(): Promise<ModelConfigSnapshot | null> {
   return invoke<ModelConfigSnapshot | null>("read_model_configs");
 }
 
+/**
+ * Mirror a frontend log line into the persistent tauri log file (alongside
+ * Rust-side log_info!/log_error! output). Use for timing/diagnostic lines
+ * that need to survive past the devtools session. Fire-and-forget; failures
+ * are swallowed so a broken IPC never derails the calling flow.
+ */
+export function frontendLog(
+  level: "info" | "warn" | "error",
+  module: string,
+  message: string,
+): void {
+  if (!IS_TAURI_ENV_LOCAL) return;
+  void invoke("frontend_log", { level, module, message }).catch(() => {});
+}
+
+// Local IS_TAURI_ENV check to avoid a circular import with the store module
+// (which is where IS_TAURI_ENV is canonically defined).
+const IS_TAURI_ENV_LOCAL =
+  typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+
 /** Persist the GUI's current ModelConfig per agent. Called after every
  *  successful Save in SettingsPanel. */
 export async function writeModelConfigs(
@@ -151,6 +177,24 @@ export async function systemReboot(): Promise<void> {
  */
 export async function openAgentDashboard(agentId: string): Promise<void> {
   return invoke("open_agent_dashboard", { agentId });
+}
+
+/**
+ * Run `bubbolink pair <code>` so the local BubboLink CLI binds the relay
+ * account that produced `code` to **every** installed runtime on this host
+ * (openclaw / hermes / claude / codex). `--runtime` is omitted on purpose —
+ * the CLI defaults to `all`, so pairing from either agent's settings panel
+ * has the same host-wide effect.
+ *
+ * `agentId` is still required: dispatch_op routes the call through that
+ * agent's shell op script (for PATH composition), but the choice doesn't
+ * change which runtimes get paired. Throws with stderr on non-zero exit.
+ */
+export async function pairBubbolink(
+  code: string,
+  agentId: AgentId,
+): Promise<void> {
+  return invoke("pair_bubbolink", { code, agentId });
 }
 
 /**

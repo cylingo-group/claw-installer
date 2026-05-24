@@ -112,19 +112,39 @@ fn hide_console(cmd: &mut std::process::Command) -> &mut std::process::Command {
     cmd
 }
 
-/// Build the path for a session's full on-disk log file in the OS temp dir.
+/// Build the path for a session's full on-disk log file under the canonical
+/// claw-installer log dir (`<tmp_dir>/claw-installer/logs/`).
 /// Honors $TMPDIR / %TEMP% / %TMP% via std::env::temp_dir().
 ///
 /// Format: <kind>-<unix-seconds>.log — sortable and grep-friendly.
 fn build_session_log_path(kind: &str) -> PathBuf {
-    let mut dir = std::env::temp_dir();
-    dir.push("claw-installer");
+    let dir = log_dir_native();
     let _ = fs::create_dir_all(&dir);
     let ts = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    dir.push(format!("{}-{}.log", kind, ts));
+    dir.join(format!("{}-{}.log", kind, ts))
+}
+
+/// The canonical log dir on the host where Rust runs.
+/// On Windows this is `%TEMP%\claw-installer\logs\`. On macOS/Linux it's
+/// `$TMPDIR/claw-installer/logs/`. Bash invocations inside WSL get a separate
+/// `CLAW_LOG_DIR` env var that translates this path through `wslpath`.
+pub(crate) fn log_dir_native() -> PathBuf {
+    let mut dir = std::env::temp_dir();
+    dir.push("claw-installer");
+    dir.push("logs");
+    dir
+}
+
+/// The canonical scratch dir for short-lived secret files (chmod 600).
+/// Used on macOS/Linux for `CLAW_TMP_DIR`. Not set on Windows — WSL bash
+/// falls back to its own `/tmp/claw-installer/tmp/` to preserve Unix permissions.
+pub(crate) fn tmp_dir_native() -> PathBuf {
+    let mut dir = std::env::temp_dir();
+    dir.push("claw-installer");
+    dir.push("tmp");
     dir
 }
 
@@ -565,6 +585,33 @@ fn parse_reboot_sentinel(line: &str) -> Option<String> {
 ///   case the appropriate event is emitted and the line is NOT forwarded as `LogLine`.
 /// - **stderr**: Discarded.
 /// - **Session log**: Written by the bash scripts themselves via fd 3.
+/// Best-effort check: is the OS process with this PID still running?
+///
+/// On Unix: kill(pid, 0) returns 0 if the process exists and is signalable by
+/// us, -1/ESRCH if it's gone, -1/EPERM if it exists but is owned by someone
+/// else (PID reuse — treat as alive to be safe).
+///
+/// On Windows: OpenProcess with PROCESS_QUERY_LIMITED_INFORMATION, then check
+/// GetExitCodeProcess. STILL_ACTIVE (259) means running. We don't currently
+/// hit the orphan-stdio scenario on Windows (the bash side runs inside WSL
+/// via PowerShell, which doesn't share pipes the same way), so we keep this
+/// simple: always return true on Windows — the watchdog becomes a no-op there.
+fn pid_alive(pid: u32) -> bool {
+    #[cfg(unix)]
+    {
+        let rc = unsafe { libc::kill(pid as libc::pid_t, 0) };
+        if rc == 0 {
+            return true;
+        }
+        std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = pid;
+        true
+    }
+}
+
 async fn run_event_loop(
     mut rx: Receiver<CommandEvent>,
     on_event: tauri::ipc::Channel<InstallerEvent>,
@@ -585,9 +632,56 @@ async fn run_event_loop(
     const RECENT_CAP: usize = 100;
     let mut recent: Vec<String> = Vec::with_capacity(RECENT_CAP);
 
+    // Snapshot the child PID so the diagnostic watchdog below can poll its
+    // liveness even after CommandChild is taken from child_state on Terminated.
+    let child_pid: u32 = match child_state.lock().await.as_ref() {
+        Some(c) => c.pid(),
+        None => 0,
+    };
+    let loop_started_at = std::time::Instant::now();
+
+    // Diagnostic-only watchdog. We have a reproducible case where bash exits
+    // cleanly but the GUI sees no Terminated for >10 minutes (run_event_loop
+    // never logs "Terminated received"). Working hypothesis: tauri-plugin-shell
+    // waits for stdout/stderr EOF, and a grandchild daemon inherits those pipes
+    // and outlives bash. We're NOT confirmed on that yet — so we don't act on
+    // the observation, just log enough timing data to confirm or refute. After
+    // 6s of bash being gone without Terminated, we log every 10s so the gap
+    // between bash-exit-time and Terminated-arrival-time (or its absence) is
+    // explicit in the tauri log.
+    let mut tick = tokio::time::interval(std::time::Duration::from_secs(2));
+    tick.tick().await; // consume initial immediate tick
+    let mut dead_ticks: u32 = 0;
+    let mut last_dead_log: u32 = 0;
+    let mut event_count: u64 = 0;
+    let mut last_event_at = loop_started_at;
+
+    // Per-step timing for figuring out which install phase dominates wall time.
+    // Updated on every StepChanged; emitted at the next step transition and at
+    // Terminated. The very first step's "phase before it" is "spawn → first step".
+    let mut current_step: String = "<pre-first-step>".to_string();
+    let mut current_step_started: std::time::Instant = loop_started_at;
+    let mut first_event_logged = false;
+    let mut stdout_bytes_total: u64 = 0;
+    let mut stdout_lines_total: u64 = 0;
+
     loop {
-        match rx.recv().await {
+        tokio::select! {
+            event = rx.recv() => {
+                event_count += 1;
+                last_event_at = std::time::Instant::now();
+                match event {
             Some(CommandEvent::Stdout(bytes)) => {
+                if !first_event_logged {
+                    first_event_logged = true;
+                    log_info!(
+                        "commands::run_event_loop",
+                        "first Stdout event at +{}ms ({} bytes)",
+                        loop_started_at.elapsed().as_millis(),
+                        bytes.len()
+                    );
+                }
+                stdout_bytes_total += bytes.len() as u64;
                 let raw = String::from_utf8_lossy(&bytes).to_string();
 
                 // Process line by line (a single recv() may deliver multiple
@@ -620,6 +714,19 @@ async fn run_event_loop(
 
                     // @@step:<key>:<label> — consumed as StepChanged.
                     if let Some((key, label)) = parse_step_sentinel(&line) {
+                        // Emit per-step duration. Prev step's wall time = now -
+                        // prev step's start. First step shows "spawn→first step".
+                        let elapsed_ms = current_step_started.elapsed().as_millis();
+                        log_info!(
+                            "commands::run_event_loop",
+                            "step '{}' done in {}ms (at +{}s) → entering '{}'",
+                            current_step,
+                            elapsed_ms,
+                            loop_started_at.elapsed().as_secs(),
+                            key
+                        );
+                        current_step = key.clone();
+                        current_step_started = std::time::Instant::now();
                         let _ = on_event.send(InstallerEvent::StepChanged {
                             key,
                             label,
@@ -629,6 +736,7 @@ async fn run_event_loop(
                     }
 
                     // All other stdout lines are forwarded verbatim.
+                    stdout_lines_total += 1;
                     if recent.len() == RECENT_CAP {
                         recent.remove(0);
                     }
@@ -643,6 +751,19 @@ async fn run_event_loop(
 
             Some(CommandEvent::Terminated(payload)) => {
                 *child_state.lock().await = None;
+                let last_step_ms = current_step_started.elapsed().as_millis();
+                log_info!(
+                    "commands::run_event_loop",
+                    "Terminated received after {}s. last step '{}' took {}ms. \
+                     totals: events={}, stdout_lines={}, stdout_bytes={}. code={:?}",
+                    loop_started_at.elapsed().as_secs(),
+                    current_step,
+                    last_step_ms,
+                    event_count,
+                    stdout_lines_total,
+                    stdout_bytes_total,
+                    payload.code
+                );
                 match payload.code {
                     Some(0) => {
                         let _ = on_event.send(InstallerEvent::StepChanged {
@@ -675,6 +796,7 @@ async fn run_event_loop(
 
             Some(CommandEvent::Error(e)) => {
                 *child_state.lock().await = None;
+                log_error!("commands::run_event_loop", "CommandEvent::Error: {}", e);
                 let _ = on_event.send(InstallerEvent::Finished {
                     success: false,
                     message: Some(e),
@@ -682,8 +804,67 @@ async fn run_event_loop(
                 break;
             }
 
-            None => break,
+            None => {
+                // rx closed without delivering Terminated. This is unusual —
+                // log loudly so we notice if it ever happens in the wild.
+                // (We don't yet have evidence this branch fires; the actual
+                // hang we observed kept rx.recv() blocking instead of closing.)
+                *child_state.lock().await = None;
+                log_error!(
+                    "commands::run_event_loop",
+                    "rx closed without Terminated after {}s ({} events). \
+                     Emitting Finished(success) so GUI can recover; investigate \
+                     why tauri-plugin-shell dropped the channel.",
+                    loop_started_at.elapsed().as_secs(),
+                    event_count
+                );
+                let _ = on_event.send(InstallerEvent::Finished {
+                    success: true,
+                    message: None,
+                });
+                break;
+            }
             _ => {}
+                }
+            },
+
+            // Diagnostic watchdog tick. Pure observation — does NOT touch
+            // on_event or break the loop. Logs how long bash has been gone
+            // without Terminated arriving, so when the GUI hangs we can read
+            // the tauri log and see the exact gap (vs. assuming a cause).
+            _ = tick.tick() => {
+                if child_pid == 0 {
+                    continue;
+                }
+                if pid_alive(child_pid) {
+                    dead_ticks = 0;
+                    continue;
+                }
+                dead_ticks += 1;
+                // First time we notice the child is gone — log a milestone.
+                if dead_ticks == 1 {
+                    log_info!(
+                        "commands::run_event_loop",
+                        "watchdog: child pid={} now gone (at +{}s; {} events received; last event +{}s)",
+                        child_pid,
+                        loop_started_at.elapsed().as_secs(),
+                        event_count,
+                        last_event_at.elapsed().as_secs()
+                    );
+                }
+                // After 6s without Terminated, start logging the lingering gap
+                // every 10s — gives a paper trail for diagnosing whether
+                // Terminated eventually arrives or never does.
+                if dead_ticks >= 3 && dead_ticks - last_dead_log >= 5 {
+                    last_dead_log = dead_ticks;
+                    log_info!(
+                        "commands::run_event_loop",
+                        "watchdog: child gone for {}s, no Terminated yet (last event +{}s)",
+                        dead_ticks * 2,
+                        last_event_at.elapsed().as_secs()
+                    );
+                }
+            }
         }
     }
 }
@@ -696,12 +877,13 @@ pub async fn run_installer(
     env: HashMap<String, String>,
     on_event: tauri::ipc::Channel<InstallerEvent>,
 ) -> Result<(), String> {
+    let _t0 = std::time::Instant::now();
     // Compute session log path, create parent dir, and pre-create the file so
     // the script can open fd 3 against it even on the very first write.
     let log_path = build_session_log_path("install");
     log_info!(
         "commands::run_installer",
-        "agents={:?} repo_dir={:?} log={:?}",
+        "entry: agents={:?} repo_dir={:?} log={:?}",
         agents,
         resolve_installer_dir(&app),
         log_path
@@ -727,6 +909,7 @@ pub async fn run_installer(
         return Ok(());
     }
 
+    let t_pre_spawn = std::time::Instant::now();
     let mut cmd = apply_login_env(build_command(&app, &agents));
     // Forward caller-supplied env vars (INSTALLER_* overrides). Expand leading
     // "~/" against the user's home dir — bash variable assignment does not
@@ -746,6 +929,13 @@ pub async fn run_installer(
     // Pass CLAW_SESSION_LOG so the bash script opens fd 3 against this path.
     cmd = cmd.env("CLAW_SESSION_LOG", log_path.to_string_lossy().as_ref());
 
+    log_info!(
+        "commands::run_installer",
+        "command built in {}ms ({} extra env vars); spawning bash...",
+        t_pre_spawn.elapsed().as_millis(),
+        env.len()
+    );
+    let t_spawn = std::time::Instant::now();
     let (rx, child) = match cmd.spawn() {
         Ok(r) => r,
         Err(e) => {
@@ -753,11 +943,20 @@ pub async fn run_installer(
             return Err(e.to_string());
         }
     };
-    log_info!("commands::run_installer", "spawned pid={}", child.pid());
+    log_info!(
+        "commands::run_installer",
+        "spawn returned in {}ms, pid={}",
+        t_spawn.elapsed().as_millis(),
+        child.pid()
+    );
     let child_arc = Arc::clone(&state.child);
     *child_arc.lock().await = Some(child);
     run_event_loop(rx, on_event, child_arc).await;
-    log_info!("commands::run_installer", "event loop finished");
+    log_info!(
+        "commands::run_installer",
+        "event loop finished, total wall time {}s",
+        _t0.elapsed().as_secs()
+    );
     Ok(())
 }
 
@@ -803,6 +1002,7 @@ pub async fn run_uninstaller(
         return Ok(());
     }
 
+    let _t0 = std::time::Instant::now();
     let mut cmd = apply_login_env(build_uninstall_command(&app, &_agent));
     cmd = cmd.env("CLAW_SESSION_LOG", log_path.to_string_lossy().as_ref());
     #[cfg(target_os = "windows")]
@@ -810,6 +1010,7 @@ pub async fn run_uninstaller(
         cmd = cmd.env("CLAW_UNINSTALL_AGENT", &_agent);
     }
 
+    let t_spawn = std::time::Instant::now();
     let (rx, child) = match cmd.spawn() {
         Ok(r) => r,
         Err(e) => {
@@ -817,11 +1018,20 @@ pub async fn run_uninstaller(
             return Err(e.to_string());
         }
     };
-    log_info!("commands::run_uninstaller", "spawned pid={}", child.pid());
+    log_info!(
+        "commands::run_uninstaller",
+        "spawn returned in {}ms, pid={}",
+        t_spawn.elapsed().as_millis(),
+        child.pid()
+    );
     let child_arc = Arc::clone(&state.child);
     *child_arc.lock().await = Some(child);
     run_event_loop(rx, on_event, child_arc).await;
-    log_info!("commands::run_uninstaller", "event loop finished");
+    log_info!(
+        "commands::run_uninstaller",
+        "event loop finished, total wall time {}s",
+        _t0.elapsed().as_secs()
+    );
     Ok(())
 }
 
@@ -873,9 +1083,11 @@ pub async fn run_service_action(
         return Ok(());
     }
 
+    let _t0 = std::time::Instant::now();
     let mut cmd = apply_login_env(build_service_command(&app, &agent, &action));
     cmd = cmd.env("CLAW_SESSION_LOG", log_path.to_string_lossy().as_ref());
 
+    let t_spawn = std::time::Instant::now();
     let (rx, child) = match cmd.spawn() {
         Ok(r) => r,
         Err(e) => {
@@ -883,11 +1095,20 @@ pub async fn run_service_action(
             return Err(e.to_string());
         }
     };
-    log_info!("commands::run_service_action", "spawned pid={}", child.pid());
+    log_info!(
+        "commands::run_service_action",
+        "spawn returned in {}ms, pid={}",
+        t_spawn.elapsed().as_millis(),
+        child.pid()
+    );
     let child_arc = Arc::clone(&state.child);
     *child_arc.lock().await = Some(child);
     run_event_loop(rx, on_event, child_arc).await;
-    log_info!("commands::run_service_action", "event loop finished");
+    log_info!(
+        "commands::run_service_action",
+        "event loop finished, total wall time {}s",
+        _t0.elapsed().as_secs()
+    );
     Ok(())
 }
 
@@ -927,6 +1148,7 @@ pub async fn install_wsl(
         return Ok(());
     }
 
+    let _t0 = std::time::Instant::now();
     let ps_path = resolve_installer_path(&app, r"windows\bootstrap.ps1");
     let shell = app.shell();
     let mut cmd = apply_login_env(
@@ -936,6 +1158,7 @@ pub async fn install_wsl(
     );
     cmd = cmd.env("CLAW_SESSION_LOG", log_path.to_string_lossy().as_ref());
 
+    let t_spawn = std::time::Instant::now();
     let (rx, child) = match cmd.spawn() {
         Ok(r) => r,
         Err(e) => {
@@ -943,11 +1166,20 @@ pub async fn install_wsl(
             return Err(e.to_string());
         }
     };
-    log_info!("commands::install_wsl", "spawned pid={}", child.pid());
+    log_info!(
+        "commands::install_wsl",
+        "spawn returned in {}ms, pid={}",
+        t_spawn.elapsed().as_millis(),
+        child.pid()
+    );
     let child_arc = Arc::clone(&state.child);
     *child_arc.lock().await = Some(child);
     run_event_loop(rx, on_event, child_arc).await;
-    log_info!("commands::install_wsl", "event loop finished");
+    log_info!(
+        "commands::install_wsl",
+        "event loop finished, total wall time {}s",
+        _t0.elapsed().as_secs()
+    );
     Ok(())
 }
 
@@ -979,16 +1211,30 @@ pub async fn system_reboot() -> Result<(), String> {
     Err("system_reboot is only supported on Windows".into())
 }
 
+/// Pipe a single line from the frontend into the persistent tauri log file so
+/// browser-console timing/diagnostic output is preserved alongside the Rust
+/// side. Kept dead simple: untrusted-source-safe (we tag with `[frontend]`
+/// and the caller-supplied module so logs are clearly attributed).
+#[tauri::command]
+pub fn frontend_log(level: String, module: String, message: String) {
+    let tag = format!("frontend::{}", module);
+    match level.as_str() {
+        "error" => log_error!(&tag, "{}", message),
+        "warn" => crate::log_warn!(&tag, "{}", message),
+        _ => log_info!(&tag, "{}", message),
+    }
+}
+
 /// Return the directory where claw-installer writes Tauri and per-op log files.
 ///
 /// Frontend can call this to populate an "Open logs folder" link in the UI.
-/// Example return: `/var/folders/…/claw-installer` (macOS) or `%TEMP%\claw-installer` (Windows).
+/// Example return: `/var/folders/…/claw-installer/logs` (macOS) or
+/// `%TEMP%\claw-installer\logs` (Windows). On Windows this directory will also
+/// contain logs written by bash inside WSL (which are redirected via the
+/// CLAW_LOG_DIR env var that PowerShell computes from `wslpath`).
 #[tauri::command]
 pub fn get_logs_dir() -> String {
-    std::env::temp_dir()
-        .join("claw-installer")
-        .to_string_lossy()
-        .into_owned()
+    log_dir_native().to_string_lossy().into_owned()
 }
 
 // ---- Unified op dispatcher -------------------------------------------------
@@ -1216,13 +1462,15 @@ pub(crate) fn dispatch_op(
     use std::io::Write as _;
     use std::process::{Command, Stdio};
 
+    let _t0 = std::time::Instant::now();
     // ── Per-op session log ────────────────────────────────────────────────
     let op_log_path = build_session_log_path(&format!("op-{}-{}", agent, op));
     log_info!(
         "commands::dispatch_op",
-        "starting op={}/{} log={}",
+        "starting op={}/{} stdin={}B log={}",
         agent,
         op,
+        stdin_bytes.len(),
         op_log_path.display()
     );
     if let Ok(mut f) = fs::OpenOptions::new()
@@ -1256,6 +1504,12 @@ pub(crate) fn dispatch_op(
     // use fd 3 (the two-stream logging contract) write to our session file.
     cmd.env("CLAW_SESSION_LOG", op_log_path.as_os_str());
 
+    // Anchor bash-side log / tmp directories to the canonical claw-installer
+    // layout. Without these, shell scripts fall back to system defaults that
+    // pollute $TMPDIR root and don't match what `get_logs_dir()` reports.
+    cmd.env("CLAW_LOG_DIR", log_dir_native().as_os_str());
+    cmd.env("CLAW_TMP_DIR", tmp_dir_native().as_os_str());
+
     // Apply caller-supplied extra env vars.
     for (k, v) in env_extras {
         cmd.env(k, v);
@@ -1265,11 +1519,21 @@ pub(crate) fn dispatch_op(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
+    let t_spawn = std::time::Instant::now();
     let mut child = cmd
         .spawn()
         .map_err(|e| format!("spawn bash claw-op.sh 失败 (op={}/{}): {}", agent, op, e))?;
+    log_info!(
+        "commands::dispatch_op",
+        "op={}/{} spawn returned in {}ms pid={}",
+        agent,
+        op,
+        t_spawn.elapsed().as_millis(),
+        child.id()
+    );
 
     if !stdin_bytes.is_empty() {
+        let t_stdin = std::time::Instant::now();
         let mut stdin_pipe = child
             .stdin
             .take()
@@ -1277,13 +1541,33 @@ pub(crate) fn dispatch_op(
         stdin_pipe
             .write_all(stdin_bytes)
             .map_err(|e| format!("写入 stdin 失败: {}", e))?;
+        log_info!(
+            "commands::dispatch_op",
+            "op={}/{} stdin write ({} bytes) in {}ms",
+            agent,
+            op,
+            stdin_bytes.len(),
+            t_stdin.elapsed().as_millis()
+        );
     }
     // Drop stdin to signal EOF.
     drop(child.stdin.take());
 
+    let t_wait = std::time::Instant::now();
     let out = child
         .wait_with_output()
         .map_err(|e| format!("等待 bash claw-op.sh 失败 (op={}/{}): {}", agent, op, e))?;
+    log_info!(
+        "commands::dispatch_op",
+        "op={}/{} wait_with_output {}ms (exit={:?}, stdout={}B, stderr={}B, total {}ms)",
+        agent,
+        op,
+        t_wait.elapsed().as_millis(),
+        out.status.code(),
+        out.stdout.len(),
+        out.stderr.len(),
+        _t0.elapsed().as_millis()
+    );
 
     // ── Append captured stdout/stderr + exit code to the op session log ───
     //
@@ -1483,37 +1767,151 @@ pub async fn apply_hermes_model_config(
     .map(|_| ())
 }
 
+// ---- pair_bubbolink -----------------------------------------------------------
+
+/// Run `bubbolink pair <code>` so the local BubboLink CLI binds the relay
+/// account that produced `code` to **every** installed runtime on this host
+/// (openclaw / hermes / claude / codex). `--runtime` is intentionally omitted —
+/// the CLI defaults to `all`, which matches what users expect when they pair
+/// from a single agent's settings panel.
+///
+/// `agent_id` is still required because dispatch_op needs an agent to route
+/// PATH composition through — it has no effect on which runtimes get paired.
+///
+/// Routes through the unified op-dispatch protocol (op = "pair-bubbolink")
+/// so the bubbolink binary is reachable on PATH via common.sh's
+/// `_claw_compose_path` (fnm-managed Node + pnpm global bin). The 4-digit
+/// code is forwarded as INSTALLER_OP_PAIR_CODE.
+#[tauri::command]
+pub async fn pair_bubbolink(
+    app: tauri::AppHandle,
+    code: String,
+    agent_id: String,
+) -> Result<(), String> {
+    // Validate code: exactly 4 ASCII digits. Mirrors the front-end gate so a
+    // tampered IPC call still can't smuggle shell metacharacters in.
+    if code.len() != 4 || !code.chars().all(|c| c.is_ascii_digit()) {
+        return Err(format!("配对码必须是 4 位数字（收到 {:?}）", code));
+    }
+    // Validate agent_id against the dispatch_op agent whitelist.
+    if agent_id != "openclaw" && agent_id != "hermes" {
+        return Err(format!("非法的 runtime: {:?}", agent_id));
+    }
+
+    let env_extras = [("INSTALLER_OP_PAIR_CODE", code.as_str())];
+
+    dispatch_op(&app, &agent_id, "pair-bubbolink", b"", &env_extras).map(|_| ())
+}
+
 // Phase 3 cleanup: shell_single_quote, run_in_wsl_with_stdin, and
 // run_in_wsl_file_based are gone — all callers migrated to dispatch_op,
 // which uses bootstrap.ps1's Invoke-WslBashStreamed for transport.
 
-// ---- Model-config snapshot persistence ---------------------------------------
+// ---- Config snapshot persistence ---------------------------------------------
 //
-// The GUI mirrors the user's committed ModelConfig (active provider, per-provider
-// credentials, savedAt timestamps) to <app_config_dir>/model-config.json so the
-// "已配置" badge + input fields survive restarts. The file holds plaintext API
-// keys, so we write it with mode 0600 on Unix (same security posture as
-// ~/.hermes/.env, which hermes itself uses).
+// The GUI mirrors the user's committed per-agent AgentConfig (active provider,
+// per-provider credentials, savedAt timestamps, channel, bubbolinkPairedAt) to
+// the canonical claw-installer config dir so badges + inputs survive restarts.
+// The file holds plaintext API keys, so we write it with mode 0600 on Unix
+// (same security posture as ~/.hermes/.env, which hermes itself uses).
+//
+// Canonical location (per the project-wide claw-installer file layout):
+//   macOS/Linux : $HOME/.claw-installer/config.json
+//   Windows     : %APPDATA%\claw-installer\config.json
 //
 // Shape is owned by the TS side; Rust passes serde_json::Value through opaquely.
 
-fn model_config_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
-    let dir = app
-        .path()
-        .app_config_dir()
-        .map_err(|e| format!("解析配置目录失败: {}", e))?;
+/// Resolve the canonical config dir. Creates it if missing.
+fn config_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    #[cfg(not(target_os = "windows"))]
+    let dir = {
+        let home = app
+            .path()
+            .home_dir()
+            .unwrap_or_else(|_| PathBuf::from(std::env::var("HOME").unwrap_or_default()));
+        home.join(".claw-installer")
+    };
+    #[cfg(target_os = "windows")]
+    let dir = {
+        // data_dir() on Windows = %APPDATA% (Roaming). We deliberately do NOT
+        // use app_config_dir() because that appends the bundle identifier.
+        let base = app
+            .path()
+            .data_dir()
+            .map_err(|e| format!("解析 %APPDATA% 失败: {}", e))?;
+        base.join("claw-installer")
+    };
+
     if !dir.exists() {
         fs::create_dir_all(&dir)
             .map_err(|e| format!("创建配置目录失败 {}: {}", dir.display(), e))?;
     }
-    Ok(dir.join("model-config.json"))
+    Ok(dir)
+}
+
+fn config_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    Ok(config_dir(app)?.join("config.json"))
+}
+
+/// One-shot migration: if the legacy `<app_config_dir>/model-config.json` still
+/// exists and the new path doesn't, move it. Idempotent; failures are logged
+/// but do not block reads (we fall back to "no snapshot" semantics).
+fn migrate_legacy_config(app: &tauri::AppHandle, new_path: &std::path::Path) {
+    if new_path.exists() {
+        return;
+    }
+    let Ok(legacy_dir) = app.path().app_config_dir() else {
+        return;
+    };
+    let legacy = legacy_dir.join("model-config.json");
+    if !legacy.exists() {
+        return;
+    }
+    if let Some(parent) = new_path.parent() {
+        if let Err(e) = fs::create_dir_all(parent) {
+            log_error!(
+                "commands::migrate_legacy_config",
+                "创建目标目录失败 {}: {}",
+                parent.display(),
+                e
+            );
+            return;
+        }
+    }
+    // Try a same-filesystem rename first; fall back to copy+remove.
+    if fs::rename(&legacy, new_path).is_err() {
+        if let Err(e) = fs::copy(&legacy, new_path) {
+            log_error!(
+                "commands::migrate_legacy_config",
+                "复制失败 {} → {}: {}",
+                legacy.display(),
+                new_path.display(),
+                e
+            );
+            return;
+        }
+        if let Err(e) = fs::remove_file(&legacy) {
+            log_info!(
+                "commands::migrate_legacy_config",
+                "已复制但删除原文件失败 {}: {}",
+                legacy.display(),
+                e
+            );
+        }
+    }
+    log_info!(
+        "commands::migrate_legacy_config",
+        "已迁移旧 model-config.json → {}",
+        new_path.display()
+    );
 }
 
 #[tauri::command]
 pub async fn read_model_configs(
     app: tauri::AppHandle,
 ) -> Result<Option<serde_json::Value>, String> {
-    let path = model_config_path(&app)?;
+    let path = config_path(&app)?;
+    migrate_legacy_config(&app, &path);
     match fs::read_to_string(&path) {
         Ok(text) => {
             let v: serde_json::Value = serde_json::from_str(&text)
@@ -1530,13 +1928,13 @@ pub async fn write_model_configs(
     app: tauri::AppHandle,
     payload: serde_json::Value,
 ) -> Result<(), String> {
-    let path = model_config_path(&app)?;
+    let path = config_path(&app)?;
     let body = serde_json::to_vec_pretty(&payload)
-        .map_err(|e| format!("序列化 model-config 失败: {}", e))?;
+        .map_err(|e| format!("序列化 config 失败: {}", e))?;
 
     // Atomic-ish: write to a sibling temp file with mode 0600 then rename.
     let parent = path.parent().unwrap_or_else(|| std::path::Path::new("."));
-    let tmp = parent.join(format!(".model-config.tmp.{}", std::process::id()));
+    let tmp = parent.join(format!(".config.tmp.{}", std::process::id()));
     write_secret_file(&tmp, &body)
         .map_err(|e| format!("写入 {} 失败: {}", tmp.display(), e))?;
     fs::rename(&tmp, &path)

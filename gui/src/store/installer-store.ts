@@ -77,6 +77,11 @@ export interface ModelConfig {
 export interface AgentConfig {
   model: ModelConfig;
   channel: ChannelId | null;
+  /** Epoch ms of the last successful `bubbolink pair` for this agent. Drives
+   *  the "已配对" badge on the BubboLink card. Persisted to
+   *  ~/.claw-installer/config.json (resp. %APPDATA%\claw-installer\config.json
+   *  on Windows) so the badge survives restarts. */
+  bubbolinkPairedAt: number | null;
 }
 
 /**
@@ -110,6 +115,53 @@ export function hydrateModelConfig(
     },
     minimax: { ...base.minimax, ...(persisted.minimax ?? {}) },
     custom: { ...base.custom, ...(persisted.custom ?? {}) },
+  };
+}
+
+/**
+ * Merge a persisted AgentConfig snapshot on top of empty defaults. Tolerates
+ * both the v1 shape (just a ModelConfig at the agent root) and the v2 shape
+ * (full AgentConfig with channel + bubbolinkPairedAt). Unknown channel values
+ * fall back to null.
+ */
+export function hydrateAgentConfig(
+  persisted:
+    | Partial<AgentConfig>
+    | Partial<ModelConfig>
+    | undefined
+    | null,
+): AgentConfig {
+  if (!persisted) {
+    return {
+      model: emptyModelConfig(),
+      channel: null,
+      bubbolinkPairedAt: null,
+    };
+  }
+  // v1 detection: legacy snapshots stored ModelConfig directly at the agent
+  // root (no `model` key). Treat any object missing `model` as v1.
+  const asAgent = persisted as Partial<AgentConfig>;
+  const isLegacy = !("model" in (persisted as object));
+  if (isLegacy) {
+    return {
+      model: hydrateModelConfig(persisted as Partial<ModelConfig>),
+      channel: null,
+      bubbolinkPairedAt: null,
+    };
+  }
+  const validChannels: ChannelId[] = ["wechat", "feishu", "dingtalk", "bubbolink"];
+  const channel =
+    asAgent.channel && validChannels.includes(asAgent.channel)
+      ? asAgent.channel
+      : null;
+  const pairedAt =
+    typeof asAgent.bubbolinkPairedAt === "number"
+      ? asAgent.bubbolinkPairedAt
+      : null;
+  return {
+    model: hydrateModelConfig(asAgent.model),
+    channel,
+    bubbolinkPairedAt: pairedAt,
   };
 }
 
@@ -188,6 +240,10 @@ export interface AgentState {
   currentStep: string | null;
   /** Short phrase describing what is happening */
   currentStepDetail: string | null;
+  /** Epoch ms when `currentStep` started. Drives the live-elapsed
+   *  display in LogStrip's header chip. Cleared (set to null) whenever
+   *  currentStep transitions to null. */
+  currentStepStartedAt: number | null;
   errorMessage?: string;
   config: AgentConfig;
 }
@@ -367,7 +423,8 @@ export const initialAgents: Record<AgentId, AgentState> = {
     port: 7841,
     currentStep: null,
     currentStepDetail: null,
-    config: { model: emptyModelConfig(), channel: null },
+    currentStepStartedAt: null,
+    config: { model: emptyModelConfig(), channel: null, bubbolinkPairedAt: null },
   },
   hermes: {
     id: "hermes",
@@ -380,7 +437,8 @@ export const initialAgents: Record<AgentId, AgentState> = {
     installedAt: null,
     currentStep: null,
     currentStepDetail: null,
-    config: { model: emptyModelConfig(), channel: null },
+    currentStepStartedAt: null,
+    config: { model: emptyModelConfig(), channel: null, bubbolinkPairedAt: null },
   },
 };
 
@@ -473,6 +531,18 @@ export const useInstaller = create<State>((set, get) => ({
 
   startInstall: (ids) => {
     const queue = ids.length ? ids : (Object.keys(initialAgents) as AgentId[]);
+    const t0 = performance.now();
+    const timingLog = (msg: string) => {
+      console.log(`[claw-timing] ${msg}`);
+      // Mirror to tauri log file so devtools-closed sessions still get data.
+      // Done via dynamic import to avoid loading api/installer in stub/test mode.
+      if (IS_TAURI_ENV) {
+        void import("@/api/installer").then(({ frontendLog }) =>
+          frontendLog("info", "timing", msg),
+        );
+      }
+    };
+    timingLog(`startInstall queue=${JSON.stringify(queue)} t=0ms`);
     set((s) => {
       const agents = { ...s.agents };
       for (const id of queue) {
@@ -481,6 +551,7 @@ export const useInstaller = create<State>((set, get) => ({
           status: "installing",
           currentStep: null,
           currentStepDetail: null,
+          currentStepStartedAt: null,
           errorMessage: undefined,
         };
       }
@@ -502,7 +573,32 @@ export const useInstaller = create<State>((set, get) => ({
     if (IS_TAURI_ENV) {
       // Deferred import to avoid loading tauri IPC in browser/test environments
       import("@/api/installer").then(({ runInstaller }) => {
-        runInstaller(queue, env, (event) => handleInstallerEvent(event, queue)).catch((err) => {
+        timingLog(`runInstaller invoked at +${Math.round(performance.now() - t0)}ms`);
+        let firstEventAt: number | null = null;
+        let lastEventAt: number = performance.now();
+        let eventCount = 0;
+        runInstaller(queue, env, (event) => {
+          eventCount++;
+          const now = performance.now();
+          if (firstEventAt === null) {
+            firstEventAt = now;
+            timingLog(`first event at +${Math.round(now - t0)}ms, type=${event.type}`);
+          }
+          if (event.type === "Finished") {
+            timingLog(
+              `Finished event at +${Math.round(now - t0)}ms ` +
+              `(${eventCount} events total, last event +${Math.round(now - lastEventAt)}ms ago), ` +
+              `success=${event.success}`,
+            );
+          }
+          lastEventAt = now;
+          handleInstallerEvent(event, queue);
+        }).then(() => {
+          timingLog(
+            `runInstaller promise resolved at +${Math.round(performance.now() - t0)}ms ` +
+            `(${eventCount} events, lastEvent +${Math.round(performance.now() - lastEventAt)}ms ago)`,
+          );
+        }).catch((err) => {
           const msg = err instanceof Error ? err.message : String(err);
           console.error("[runInstaller] rejected:", msg);
           set((s) => {
@@ -514,6 +610,7 @@ export const useInstaller = create<State>((set, get) => ({
                 errorMessage: `安装无法启动：${msg}`,
                 currentStep: null,
                 currentStepDetail: null,
+                currentStepStartedAt: null,
               };
             }
             return { agents, installQueue: [], installEndedAt: Date.now() };
@@ -541,6 +638,7 @@ export const useInstaller = create<State>((set, get) => ({
           errorMessage: "已被用户中止",
           currentStep: null,
           currentStepDetail: null,
+          currentStepStartedAt: null,
         };
       }
       return { agents, installQueue: [], installEndedAt: Date.now() };
@@ -564,6 +662,7 @@ export const useInstaller = create<State>((set, get) => ({
           status: "uninstalling",
           currentStep: null,
           currentStepDetail: null,
+          currentStepStartedAt: null,
         },
       },
       uninstallTarget: null,
@@ -614,6 +713,7 @@ export const useInstaller = create<State>((set, get) => ({
                 errorMessage: event.message ?? "卸载失败",
                 currentStep: null,
                 currentStepDetail: null,
+                currentStepStartedAt: null,
               },
             },
           }));
@@ -635,6 +735,7 @@ export const useInstaller = create<State>((set, get) => ({
                 errorMessage: `卸载无法启动：${msg}`,
                 currentStep: null,
                 currentStepDetail: null,
+                currentStepStartedAt: null,
               },
             },
           }));
@@ -699,6 +800,7 @@ export const useInstaller = create<State>((set, get) => ({
           ...s.agents[id],
           currentStep: step,
           currentStepDetail: detail,
+          currentStepStartedAt: step === null ? null : Date.now(),
         },
       },
     })),
@@ -835,19 +937,13 @@ export const useInstaller = create<State>((set, get) => ({
               ...s.agents.openclaw,
               status:
                 statePayload.openclaw === "installed" ? "ready" : "not-installed",
-              config: {
-                ...s.agents.openclaw.config,
-                model: hydrateModelConfig(persistedAgents.openclaw),
-              },
+              config: hydrateAgentConfig(persistedAgents.openclaw),
             },
             hermes: {
               ...s.agents.hermes,
               status:
                 statePayload.hermes === "installed" ? "ready" : "not-installed",
-              config: {
-                ...s.agents.hermes.config,
-                model: hydrateModelConfig(persistedAgents.hermes),
-              },
+              config: hydrateAgentConfig(persistedAgents.hermes),
             },
           },
           hostStatus: hostPayload.status as HostStatus,
@@ -891,35 +987,50 @@ function handleInstallerEvent(event: InstallerEvent, queue: AgentId[]) {
     useInstaller.getState().simulateRebootRequired(event.kind);
   } else if (event.type === "Finished") {
     if (event.success) {
-      // Transition all queued agents to ready
+      // Transition all queued agents to ready. We deliberately do NOT gate on
+      // `status === "installing"` — if the store was reset mid-install (Vite
+      // HMR during dev, manual bootstrap re-run, etc.) the queue's agents may
+      // be in any other state, and skipping the transition would leave the
+      // GUI stuck. The queue itself is the source of truth for "this install
+      // run was for these agents".
+      const before = useInstaller.getState().agents;
+      const beforeStatuses = queue.map((id) => `${id}:${before[id].status}`).join(",");
       useInstaller.setState((s) => {
         const agents = { ...s.agents };
         for (const id of queue) {
-          if (agents[id].status === "installing") {
-            agents[id] = {
-              ...agents[id],
-              status: "ready",
-              currentStep: null,
-              currentStepDetail: null,
-              installedAt: new Date().toISOString(),
-            };
-          }
+          agents[id] = {
+            ...agents[id],
+            status: "ready",
+            currentStep: null,
+            currentStepDetail: null,
+            currentStepStartedAt: null,
+            errorMessage: undefined,
+            installedAt: new Date().toISOString(),
+          };
         }
         return { agents, installQueue: [], installEndedAt: Date.now() };
       });
+      const after = useInstaller.getState().agents;
+      const afterStatuses = queue.map((id) => `${id}:${after[id].status}`).join(",");
+      const msg = `Finished handled: before={${beforeStatuses}} after={${afterStatuses}}`;
+      console.log(`[claw-timing] ${msg}`);
+      if (IS_TAURI_ENV) {
+        void import("@/api/installer").then(({ frontendLog }) =>
+          frontendLog("info", "timing", msg),
+        );
+      }
     } else {
       useInstaller.setState((s) => {
         const agents = { ...s.agents };
         for (const id of queue) {
-          if (agents[id].status === "installing") {
-            agents[id] = {
-              ...agents[id],
-              status: "error",
-              errorMessage: event.message ?? "安装失败",
-              currentStep: null,
-              currentStepDetail: null,
-            };
-          }
+          agents[id] = {
+            ...agents[id],
+            status: "error",
+            errorMessage: event.message ?? "安装失败",
+            currentStep: null,
+            currentStepDetail: null,
+            currentStepStartedAt: null,
+          };
         }
         return { agents, installQueue: [], installEndedAt: Date.now() };
       });
@@ -962,7 +1073,7 @@ function runLifecycle(
     logExpanded: true,
     agents: {
       ...cur.agents,
-      [id]: { ...cur.agents[id], currentStep: null, currentStepDetail: null },
+      [id]: { ...cur.agents[id], currentStep: null, currentStepDetail: null, currentStepStartedAt: null },
     },
   }));
 
@@ -988,6 +1099,7 @@ function runLifecycle(
               status: action === "stop" ? "stopped" : "ready",
               currentStep: null,
               currentStepDetail: null,
+              currentStepStartedAt: null,
               errorMessage: undefined,
             }
           : {
@@ -997,6 +1109,7 @@ function runLifecycle(
                 event.message ?? (action === "start" ? "启动失败" : "停止失败"),
               currentStep: null,
               currentStepDetail: null,
+              currentStepStartedAt: null,
             };
         return {
           agents: { ...cur.agents, [id]: next },
@@ -1021,6 +1134,7 @@ function runLifecycle(
               errorMessage: `${action} 无法启动：${msg}`,
               currentStep: null,
               currentStepDetail: null,
+              currentStepStartedAt: null,
             },
           },
           serviceActionAgent: null,

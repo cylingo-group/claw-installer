@@ -41,7 +41,7 @@ step_shell_rc() {
       manifest_record shell_rc_block "$rc" preexisting
       continue
     fi
-    tmp="$(mktemp)"
+    tmp="$(mktemp -p "$(_claw_tmp_dir)")"
     awk -v b="$SHELL_RC_SENTINEL_BEGIN" -v e="$SHELL_RC_SENTINEL_END" '
       BEGIN { skip = 0 }
       $0 == b { skip = 1; next }

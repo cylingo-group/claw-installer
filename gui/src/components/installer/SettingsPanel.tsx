@@ -24,7 +24,6 @@ import {
   useInstaller,
   isProviderConfigured,
   isCustomConfigured,
-  type AgentId,
   type AgentState,
   type ApiStyle,
   type ChannelId,
@@ -38,6 +37,7 @@ import {
   applyHermesModelConfig,
   applyOpenclawModelConfig,
   openExternalUrl,
+  pairBubbolink,
   writeModelConfigs,
 } from "@/api/installer";
 import {
@@ -107,13 +107,45 @@ const API_STYLE_LABEL: Record<ApiStyle, string> = {
   anthropic: "Anthropic 风格",
 };
 
-const CHANNEL_IDS: ChannelId[] = ["wechat", "feishu", "dingtalk", "bubbolink"];
 const CHANNEL_LABELS: Record<ChannelId, string> = {
   wechat: "微信",
   feishu: "飞书",
   dingtalk: "钉钉",
   bubbolink: "BubboLink",
 };
+
+interface DocChannelMeta {
+  id: Exclude<ChannelId, "bubbolink">;
+  docsUrl: string;
+  blurb: string;
+}
+
+// 微信/飞书/钉钉 are not auto-configurable from this GUI — see
+// docs/research/2026-05-23-openclaw-channels-auto-config/report.md (TL;DR:
+// feishu silently drops --token, weixin requires interactive QR, dingtalk
+// has no official docs.openclaw.ai page yet). v1 simply links to each
+// channel's integration docs and lets the user follow them externally.
+const DOC_CHANNELS: DocChannelMeta[] = [
+  {
+    id: "wechat",
+    docsUrl: "https://docs.openclaw.ai/channels/wechat",
+    blurb: "OpenClaw 个人微信接入指南",
+  },
+  {
+    id: "feishu",
+    docsUrl: "https://docs.openclaw.ai/channels/feishu",
+    blurb: "OpenClaw 飞书 / Lark 接入指南",
+  },
+  {
+    id: "dingtalk",
+    docsUrl: "https://github.com/DingTalk-Real-AI/dingtalk-openclaw-connector",
+    blurb: "官方 OpenClaw 钉钉 Channel 插件",
+  },
+];
+
+// "何为 BubboLink?" link target — npm page is the safest stable URL we can
+// surface today. Swap to a product landing page once one exists.
+const BUBBOLINK_INTRO_URL = "https://www.npmjs.com/package/@bubbolink/cli";
 
 function activeProviderSummary(model: ModelConfig): string {
   switch (model.active) {
@@ -143,11 +175,11 @@ type View =
 
 function RootPage({
   model,
-  channel,
+  paired,
   go,
 }: {
   model: ModelConfig;
-  channel: ChannelId | null;
+  paired: boolean;
   go: (v: View) => void;
 }) {
   return (
@@ -162,7 +194,7 @@ function RootPage({
       <SectionCard
         icon={<MessageSquare className="h-3.5 w-3.5" />}
         title="通道配置"
-        summary={channel ? `当前：${CHANNEL_LABELS[channel]}` : "尚未选择"}
+        summary={paired ? "BubboLink · 已配对" : "BubboLink · 未配对"}
         onClick={() => go({ kind: "channel" })}
       />
     </div>
@@ -345,16 +377,17 @@ function useModelSaveController(agent: AgentState) {
           },
         });
       }
-      // Persist the GUI's per-agent ModelConfig snapshot so a restart doesn't
-      // wipe the badge or input fields. Read fresh state from the store after
-      // the updateAgentConfig above (Zustand set is synchronous).
+      // Persist the GUI's per-agent AgentConfig snapshot so a restart doesn't
+      // wipe badges, input fields, or the active channel / pair-at timestamp.
+      // Read fresh state from the store after the updateAgentConfig above
+      // (Zustand set is synchronous).
       try {
         const agents = useInstaller.getState().agents;
         await writeModelConfigs({
-          version: 1,
+          version: 2,
           agents: {
-            openclaw: agents.openclaw.config.model,
-            hermes: agents.hermes.config.model,
+            openclaw: agents.openclaw.config,
+            hermes: agents.hermes.config,
           },
         });
       } catch (persistErr) {
@@ -1207,52 +1240,289 @@ function ProviderDot({ active }: { active: boolean }) {
 
 // ---- L2: channel page ---------------------------------------------------------
 
-function ChannelPage({
-  agentId,
-  channel,
-}: {
-  agentId: AgentId;
-  channel: ChannelId | null;
-}) {
-  const updateAgentConfig = useInstaller((s) => s.updateAgentConfig);
+function ChannelPage({ agent }: { agent: AgentState }) {
+  return (
+    <div className="space-y-2.5">
+      <BubboLinkCard agent={agent} />
+      {DOC_CHANNELS.map((c) => (
+        <DocChannelCard key={c.id} channel={c} />
+      ))}
+    </div>
+  );
+}
 
-  function handleChannelChange(value: ChannelId) {
-    updateAgentConfig(agentId, { channel: value });
+function DocChannelCard({ channel }: { channel: DocChannelMeta }) {
+  return (
+    <button
+      type="button"
+      onClick={() => void openExternalUrl(channel.docsUrl)}
+      className={cn(
+        "flex w-full items-center gap-3 rounded-md border border-border bg-surface px-3.5 py-3 text-left transition-colors",
+        "hover:border-foreground/30 hover:bg-background",
+      )}
+    >
+      <span className="min-w-0 flex-1 leading-tight">
+        <span className="block text-sm font-medium text-foreground">
+          {CHANNEL_LABELS[channel.id]}
+        </span>
+        <span className="mt-0.5 block truncate text-[11px] text-muted">
+          {channel.blurb}
+        </span>
+      </span>
+      <ExternalLink className="h-3.5 w-3.5 shrink-0 text-muted" />
+    </button>
+  );
+}
+
+type PairState =
+  | { kind: "idle" }
+  | { kind: "pairing" }
+  | { kind: "error"; message: string };
+
+function BubboLinkCard({ agent }: { agent: AgentState }) {
+  const updateAgentConfig = useInstaller((s) => s.updateAgentConfig);
+  const [code, setCode] = useState("");
+  const [state, setState] = useState<PairState>({ kind: "idle" });
+
+  const paired = agent.config.bubbolinkPairedAt !== null;
+  const canPair = /^\d{4}$/.test(code) && state.kind !== "pairing";
+
+  async function onPair() {
+    setState({ kind: "pairing" });
+    try {
+      await pairBubbolink(code, agent.id);
+      // `bubbolink pair` (without --runtime) binds the relay account to every
+      // runtime on the host, so stamp pairedAt on both agents — otherwise the
+      // other agent's "已配对" badge would lie.
+      const now = Date.now();
+      updateAgentConfig("openclaw", {
+        channel: "bubbolink",
+        bubbolinkPairedAt: now,
+      });
+      updateAgentConfig("hermes", {
+        channel: "bubbolink",
+        bubbolinkPairedAt: now,
+      });
+      // Persist immediately so a crash before the next Save doesn't lose the
+      // pair state. Read fresh store snapshot (Zustand set is synchronous).
+      try {
+        const agents = useInstaller.getState().agents;
+        await writeModelConfigs({
+          version: 2,
+          agents: {
+            openclaw: agents.openclaw.config,
+            hermes: agents.hermes.config,
+          },
+        });
+      } catch (persistErr) {
+        console.warn("[onPair] writeModelConfigs failed:", persistErr);
+      }
+      setState({ kind: "idle" });
+      setCode("");
+    } catch (err) {
+      const message =
+        err instanceof Error
+          ? err.message
+          : typeof err === "string"
+            ? err
+            : "未知错误";
+      setState({ kind: "error", message });
+    }
   }
 
   return (
-    <div role="radiogroup" aria-label="IM 通道" className="space-y-2">
-      {CHANNEL_IDS.map((id) => {
-        const selected = channel === id;
-        return (
-          <label
-            key={id}
-            className={cn(
-              "flex cursor-pointer items-center gap-3 rounded-md border px-3.5 py-2.5 transition-colors",
-              selected
-                ? "border-accent bg-accent/[0.04]"
-                : "border-border hover:border-foreground/30",
-            )}
-          >
-            <input
-              type="radio"
-              name={`channel-${agentId}`}
-              value={id}
-              checked={selected}
-              onChange={() => handleChannelChange(id)}
-              className="h-3.5 w-3.5 shrink-0 accent-accent"
-            />
-            <span
-              className={cn(
-                "text-sm font-medium",
-                selected ? "text-accent" : "text-foreground",
-              )}
-            >
-              {CHANNEL_LABELS[id]}
+    <div
+      className={cn(
+        "overflow-hidden rounded-md border-2 transition-colors",
+        paired ? "border-success/40" : "border-accent",
+      )}
+    >
+      <div className="bg-gradient-to-r from-accent/[0.10] via-accent/[0.04] to-transparent px-3.5 py-3">
+        <div className="min-w-0 flex-1 leading-tight">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-semibold text-foreground">
+              {CHANNEL_LABELS.bubbolink}
             </span>
-          </label>
-        );
-      })}
+            <span className="inline-flex items-center gap-0.5 rounded-sm bg-accent px-1.5 py-0.5 text-[10px] font-medium text-surface">
+              <Sparkles className="h-2.5 w-2.5" />
+              推荐
+            </span>
+            {paired && (
+              <span className="rounded-sm bg-success/10 px-1.5 py-0.5 text-[10px] font-medium text-success">
+                已配对
+              </span>
+            )}
+          </div>
+          <p className="mt-0.5 text-[11px] leading-relaxed text-muted">
+            从 BubboLink App 读取 4 位配对码，在本机完成绑定。
+          </p>
+          <button
+            type="button"
+            onClick={() => void openExternalUrl(BUBBOLINK_INTRO_URL)}
+            className="mt-1 inline-flex items-center gap-1 text-[11px] text-accent hover:underline"
+          >
+            何为 BubboLink？
+            <ExternalLink className="h-3 w-3" />
+          </button>
+        </div>
+      </div>
+
+      <div className="space-y-3 border-t border-border/60 bg-background/40 px-3.5 py-3.5">
+        <label className="block text-[11px] text-muted">
+          配对码<RequiredMark />
+        </label>
+        <div className="flex justify-center">
+          <OtpInput
+            length={4}
+            value={code}
+            onChange={(v) => {
+              setCode(v);
+              if (state.kind === "error") setState({ kind: "idle" });
+            }}
+            disabled={state.kind === "pairing"}
+          />
+        </div>
+        <button
+          type="button"
+          onClick={() => void onPair()}
+          disabled={!canPair}
+          className={cn(
+            "inline-flex w-full items-center justify-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+            canPair
+              ? "bg-accent text-surface hover:opacity-90"
+              : "cursor-not-allowed bg-foreground/10 text-muted",
+          )}
+        >
+          {state.kind === "pairing" ? (
+            <>
+              <span className="h-3 w-3 animate-spin rounded-full border border-surface/40 border-t-surface" />
+              配对中…
+            </>
+          ) : paired ? (
+            "重新配对"
+          ) : (
+            "配对"
+          )}
+        </button>
+        {state.kind === "error" && (
+          <pre className="ued-scroll-thin mt-1 max-h-28 overflow-auto whitespace-pre-wrap rounded border border-danger/30 bg-danger/[0.04] px-2.5 py-2 font-mono text-[10.5px] leading-snug text-danger">
+            {state.message}
+          </pre>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Fixed-length OTP input: `length` separate single-digit cells, auto-advance
+ * on input, backspace returns to the previous cell. `value` is the joined
+ * digit string (0..length chars). Non-digit input is silently dropped.
+ *
+ * Behavior:
+ *   - Typing a digit overwrites the current cell and moves focus forward.
+ *   - Backspace on an empty cell focuses (and clears) the previous cell.
+ *   - ArrowLeft / ArrowRight navigate without modifying values.
+ *   - Pasting a numeric string fills cells starting at the focused index.
+ */
+function OtpInput({
+  length,
+  value,
+  onChange,
+  disabled,
+}: {
+  length: number;
+  value: string;
+  onChange: (next: string) => void;
+  disabled?: boolean;
+}) {
+  const refs = useRef<(HTMLInputElement | null)[]>([]);
+  const digits = Array.from({ length }, (_, i) => value[i] ?? "");
+
+  function setAt(i: number, ch: string) {
+    const arr = digits.slice();
+    arr[i] = ch;
+    onChange(arr.join("").slice(0, length));
+  }
+
+  function focusAt(i: number) {
+    const el = refs.current[i];
+    if (el) {
+      el.focus();
+      el.select();
+    }
+  }
+
+  function onCellChange(i: number, raw: string) {
+    // Take the last digit typed — covers IMEs that deliver multiple chars at once.
+    const d = raw.replace(/\D+/g, "").slice(-1);
+    if (!d) {
+      // Non-digit input: keep current value, do nothing.
+      return;
+    }
+    setAt(i, d);
+    if (i < length - 1) focusAt(i + 1);
+  }
+
+  function onCellKeyDown(i: number, e: ReactKeyboardEvent<HTMLInputElement>) {
+    if (e.key === "Backspace") {
+      e.preventDefault();
+      if (digits[i]) {
+        setAt(i, "");
+      } else if (i > 0) {
+        setAt(i - 1, "");
+        focusAt(i - 1);
+      }
+    } else if (e.key === "ArrowLeft" && i > 0) {
+      e.preventDefault();
+      focusAt(i - 1);
+    } else if (e.key === "ArrowRight" && i < length - 1) {
+      e.preventDefault();
+      focusAt(i + 1);
+    }
+  }
+
+  function onCellPaste(i: number, e: React.ClipboardEvent<HTMLInputElement>) {
+    const txt = e.clipboardData.getData("text").replace(/\D+/g, "");
+    if (!txt) return;
+    e.preventDefault();
+    const arr = digits.slice();
+    let cursor = i;
+    for (const ch of txt) {
+      if (cursor >= length) break;
+      arr[cursor++] = ch;
+    }
+    onChange(arr.join("").slice(0, length));
+    focusAt(Math.min(cursor, length - 1));
+  }
+
+  return (
+    <div className="flex items-center gap-2.5">
+      {digits.map((d, i) => (
+        <input
+          key={i}
+          ref={(el) => {
+            refs.current[i] = el;
+          }}
+          type="text"
+          inputMode="numeric"
+          autoComplete="one-time-code"
+          maxLength={1}
+          value={d}
+          disabled={disabled}
+          onChange={(e) => onCellChange(i, e.target.value)}
+          onKeyDown={(e) => onCellKeyDown(i, e)}
+          onPaste={(e) => onCellPaste(i, e)}
+          onFocus={(e) => e.currentTarget.select()}
+          aria-label={`配对码第 ${i + 1} 位`}
+          className={cn(
+            "h-12 w-12 rounded-xl border-2 bg-background/60 text-center font-mono text-xl text-foreground caret-accent",
+            "transition-[colors,box-shadow] focus:border-accent focus:bg-surface focus:shadow-[0_0_0_4px_rgba(99,102,241,0.15)] focus:outline-none",
+            d ? "border-border" : "border-border/60",
+            disabled && "cursor-not-allowed opacity-60",
+          )}
+        />
+      ))}
     </div>
   );
 }
@@ -1321,12 +1591,7 @@ export function SettingsPanel() {
       </header>
 
       {agent && target && (
-        <SettingsPanelBody
-          agent={agent}
-          target={target}
-          view={view}
-          go={setView}
-        />
+        <SettingsPanelBody agent={agent} view={view} go={setView} />
       )}
     </section>
   );
@@ -1334,12 +1599,10 @@ export function SettingsPanel() {
 
 function SettingsPanelBody({
   agent,
-  target,
   view,
   go,
 }: {
   agent: AgentState;
-  target: AgentId;
   view: View;
   go: (v: View) => void;
 }) {
@@ -1352,14 +1615,12 @@ function SettingsPanelBody({
           {view.kind === "root" && (
             <RootPage
               model={agent.config.model}
-              channel={agent.config.channel}
+              paired={agent.config.bubbolinkPairedAt !== null}
               go={go}
             />
           )}
           {view.kind === "model" && <ModelPage agent={agent} />}
-          {view.kind === "channel" && (
-            <ChannelPage agentId={target} channel={agent.config.channel} />
-          )}
+          {view.kind === "channel" && <ChannelPage agent={agent} />}
         </div>
       </div>
       {view.kind === "model" && (

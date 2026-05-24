@@ -30,7 +30,7 @@ step_npmrc() {
   fi
 
   local tmp
-  tmp="$(mktemp)"
+  tmp="$(mktemp -p "$(_claw_tmp_dir)")"
   if [[ -f "$rc" ]]; then
     awk -v b="$NPMRC_SENTINEL_BEGIN" -v e="$NPMRC_SENTINEL_END" '
       BEGIN { skip = 0 }

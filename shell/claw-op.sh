@@ -29,12 +29,13 @@ _op_valid_agents() {
     open-dashboard)        echo 'openclaw hermes' ;;
     approve-latest-device) echo 'openclaw' ;;
     find-dashboard-port)   echo 'hermes' ;;
+    pair-bubbolink)        echo 'openclaw hermes' ;;
     *)                     echo '' ;;
   esac
 }
 
 _all_ops() {
-  echo 'apply-model-config open-dashboard approve-latest-device find-dashboard-port'
+  echo 'apply-model-config open-dashboard approve-latest-device find-dashboard-port pair-bubbolink'
 }
 
 _usage() {

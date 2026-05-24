@@ -1,6 +1,6 @@
 //! Persistent per-launch Tauri log file.
 //!
-//! Opens `<tmp_dir>/claw-installer/tauri-<unix-ts>.log` once at process start,
+//! Opens `<tmp_dir>/claw-installer/logs/tauri-<unix-ts>.log` once at process start,
 //! appends log lines in `<ISO-8601-UTC> <LEVEL> [<module>] <message>\n` format,
 //! and mirrors to stderr in debug builds.
 //!
@@ -41,7 +41,7 @@ static LOG_PATH: OnceLock<PathBuf> = OnceLock::new();
 
 /// Initialise the logger.
 ///
-/// Creates `<tmp_dir>/claw-installer/` and opens
+/// Creates `<tmp_dir>/claw-installer/logs/` and opens
 /// `tauri-<unix-ts>.log` in append mode. Called once from `lib.rs::run()`.
 ///
 /// On failure (e.g. permission denied on `tmp_dir`) the function logs the
@@ -57,6 +57,7 @@ pub fn log_init() -> PathBuf {
 
     let mut dir = std::env::temp_dir();
     dir.push("claw-installer");
+    dir.push("logs");
     if let Err(e) = fs::create_dir_all(&dir) {
         eprintln!(
             "[claw-installer] logger: failed to create log dir {}: {}",

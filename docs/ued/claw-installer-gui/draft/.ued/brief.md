@@ -95,3 +95,40 @@ MiniMax / 心元）。需要重构为：
 - 心元额度展示（剩余 token 数）。
 - 多自定义 Provider 管理。
 - Provider 按协议族分类（OpenAI / Anthropic / Ollama 等）。
+
+---
+
+## v4 — 通道配置改版（2026-05-23 起）
+
+### 背景
+经 OpenClaw IM channel 调研（docs/research/2026-05-23-openclaw-channels-auto-config/report.md）
+得出：飞书 `channels add --token` 静默丢弃凭据；微信只能扫码；钉钉无
+docs.openclaw.ai 官方页。**只有 BubboLink 能在 GUI 内真正一键配对**，其他
+三个通道用户必须自己到外部平台配。
+
+继续把四个通道当成对等 radio 会误导用户："勾上飞书"什么都不会发生。改版
+要把这种语义差异显式表达出来。
+
+### 目标
+1. **BubboLink** 是真正可在本 GUI 完成配置的通道 → 突出展示，提供 4 位 OTP
+   配对码输入 + 配对按钮（调 `bubbolink pair <code> --runtime <agent>`）。
+2. **微信 / 飞书 / 钉钉** 改为「参考官方文档」入口卡片，点击在系统浏览器打开。
+3. L1 通道卡 summary 反映 BubboLink 配对状态（"已配对" / "未配对"）。
+
+### 对齐结论（Phase 1）
+
+| 维度 | 决定 |
+|---|---|
+| 层级策略 | **平铺四卡**：BubboLink 在最上、用 accent border + "推荐" 角标加强；下方依序 微信 / 飞书 / 钉钉，纯文档链接卡。无小标题分区。 |
+| BubboLink 卡 | 标题 "BubboLink" + 副标 "从 BubboLink App 读取 4 位配对码，在本机完成绑定" + 内联小号「何为 BubboLink?」外链。已配对时右上角 success 角标。 |
+| OTP 输入 | 4 个独立单字格，**加大尺寸 + 加粗间距**（h-12 w-12 / gap-2.5），rounded-xl 圆角，accent focus border。输入数字自动跳下一格；Backspace 回退；ArrowLeft/Right 导航；paste 多位数字自动分配。不自动提交——手动点"配对"。 |
+| 配对按钮 | 位于 OTP 行下方，full-width；4 位齐时启用，否则灰态。配对成功 → "已配对" 角标 + 按钮变 "重新配对"。失败 → 内联红色错误框。 |
+| 其他通道卡 | 标题 + 一行 blurb（"OpenClaw 官方接入指南"）+ 右侧 ExternalLink 图标；onClick 打开外部 URL。**不带 radio、无选中态**——纯导航卡。 |
+| 文档 URL | 微信 → docs.openclaw.ai/channels/wechat；飞书 → docs.openclaw.ai/channels/feishu；钉钉 → github.com/DingTalk-Real-AI/dingtalk-openclaw-connector（docs.openclaw.ai 暂无钉钉页）。 |
+| L1 summary | `BubboLink · 已配对` / `BubboLink · 未配对` 而非"当前：BubboLink"——更精确反映 "channel 不是 4 选 1，是 BubboLink 配没配"。 |
+
+### 不在本轮范围
+- 微信 / 飞书 / 钉钉的 in-GUI 配置流（这是 OpenClaw 上游 channel 插件的事，不归 installer 管）。
+- BubboLink 多账号 / 重新生成配对码 / 在 GUI 内显示 BubboLink App 的二维码或推送。
+- "测试连接" 按钮——配对成功 = 已生效，不需要二次健康检查。
+- 配对状态持久化：bubbolink CLI 自己保管 session，本 GUI 只做 in-memory 徽章。

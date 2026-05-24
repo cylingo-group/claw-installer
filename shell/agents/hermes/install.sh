@@ -84,7 +84,7 @@ run_upstream_hermes_installer() {
 
   log "Fetching upstream installer: $HERMES_INSTALL_URL"
   local tmp
-  tmp="$(mktemp -t hermes-install.XXXXXX.sh)"
+  tmp="$(mktemp -p "$(_claw_tmp_dir)" hermes-install.XXXXXX.sh)"
   # shellcheck disable=SC2064
   trap "rm -f '$tmp'" RETURN
   run curl -fsSL "$HERMES_INSTALL_URL" -o "$tmp"

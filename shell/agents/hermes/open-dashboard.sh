@@ -3,10 +3,12 @@
 #
 # Op contract (per op-dispatch-protocol/spec.md D5):
 #   stdin            : none (redirected from /dev/null by dispatch layer)
-#   env vars read    : none
+#   env vars read    : CLAW_LOG_DIR (optional) — anchors the spawn log under the
+#                      canonical claw-installer log dir. Falls back to
+#                      ${TMPDIR:-/tmp}/claw-installer/logs.
 #   stdout           : preflight diagnostics + sentinel "@@hermes-spawn-log:<path>"
 #                      pointing to the file where hermes's own output lives
-#                      (inside WSL, e.g. /tmp/claw-installer/hermes-dashboard-spawn-*.log)
+#                      (e.g. <CLAW_LOG_DIR>/hermes-dashboard-spawn-*.log)
 #   exit 0           : daemon spawned, still alive at +2s (best-effort)
 #   exit 1           : preflight failed (binary missing / unrunnable) OR
 #                      hermes process exited within 2s of spawn (early crash)
@@ -51,7 +53,10 @@ else
 fi
 
 # Set up a known log path so post-mortem inspection is straightforward.
-_log_dir="/tmp/claw-installer"
+# Honors CLAW_LOG_DIR (set by the GUI / PowerShell so all claw-installer logs
+# land in one Explorer-visible directory on Windows); falls back to the local
+# canonical path otherwise.
+_log_dir="${CLAW_LOG_DIR:-${TMPDIR:-/tmp}/claw-installer/logs}"
 mkdir -p "$_log_dir"
 _spawn_log="$_log_dir/hermes-dashboard-spawn-$(date +%s).log"
 

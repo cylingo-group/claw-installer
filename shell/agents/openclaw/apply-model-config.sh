@@ -26,7 +26,7 @@ _claw_compose_path
 # Read stdin into a chmod-600 temp file. EXIT trap guarantees cleanup.
 # ---------------------------------------------------------------------------
 _nanos="$(date +%s%N 2>/dev/null || date +%s)"
-_patch_tmp="/tmp/openclaw-patch-$$-${_nanos}.json"
+_patch_tmp="$(_claw_tmp_dir)/openclaw-patch-$$-${_nanos}.json"
 trap 'rm -f "$_patch_tmp"' EXIT
 
 cat > "$_patch_tmp"

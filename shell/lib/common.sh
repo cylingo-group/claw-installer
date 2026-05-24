@@ -235,11 +235,23 @@ export SHELL_RC_SENTINEL_END="# <<< claw-installer env <<<"
 # without Rust, auto-generate a fallback so scripts always have a log file.
 CURRENT_STEP="${CURRENT_STEP:-}"
 
+# Canonical scratch dir for short-lived secret files. Honors CLAW_TMP_DIR if
+# the caller set it; otherwise falls back to the local canonical path. On
+# Windows we deliberately do NOT translate this to a Windows mount (would
+# break chmod 600 under 9P) — WSL bash uses its own ext4 /tmp.
+_claw_tmp_dir() {
+  local d="${CLAW_TMP_DIR:-${TMPDIR:-/tmp}/claw-installer/tmp}"
+  mkdir -p "$d"
+  printf '%s' "$d"
+}
+
 if [[ -n "${CLAW_SESSION_LOG:-}" ]]; then
   exec 3>>"$CLAW_SESSION_LOG"
 else
-  # Auto-generate a CLI fallback log path.
-  _fallback_log_dir="${TMPDIR:-/tmp}/claw-installer"
+  # Auto-generate a CLI fallback log path. Honors CLAW_LOG_DIR if the caller
+  # (Rust GUI on Unix; PowerShell on Windows after wslpath translation) set
+  # it; otherwise falls back to the canonical local path.
+  _fallback_log_dir="${CLAW_LOG_DIR:-${TMPDIR:-/tmp}/claw-installer/logs}"
   mkdir -p "$_fallback_log_dir"
   _fallback_ts="$(date -u +%Y%m%dT%H%M%SZ 2>/dev/null || date +%Y%m%dT%H%M%SZ)"
   export CLAW_SESSION_LOG="$_fallback_log_dir/cli-${_fallback_ts}.log"
@@ -503,13 +515,33 @@ source "$__CLAW_LIB_DIR/manifest.sh"
 #   or 124 if it timed out. Uses GNU `timeout` / `gtimeout` when available;
 #   otherwise falls back to a pure-bash background-and-kill scheme so this
 #   works on a bare macOS without `coreutils` from brew.
+#
+# IMPORTANT — fd inheritance in the bash fallback:
+#   The killer subshell must NOT inherit our stdout/stderr/fd3 (the GUI's
+#   tauri-plugin-shell pipes). If it does, killing the subshell only kills
+#   bash itself; the `sleep` grandchild is reparented to init, keeps the
+#   inherited pipe handles, and tauri-plugin-shell's reader task never sees
+#   EOF — `Terminated` is delayed by up to `$secs` seconds. We've observed
+#   this exact wedge with `run_with_timeout 600` in hermes-web-prebuild on
+#   macOS without coreutils: the GUI sat at "installing" for ~10 minutes
+#   after bash had already exited cleanly.
+#
+#   Fix: `exec` inside the subshell to close fd 0/1/2/3 before spawning
+#   `sleep`. The orphaned sleep (if it survives) holds nothing of ours, so
+#   our parent pipes close as soon as the foreground command exits.
 run_with_timeout() {
   local secs="$1"; shift
   if command -v timeout  >/dev/null 2>&1; then timeout  "$secs" "$@"; return; fi
   if command -v gtimeout >/dev/null 2>&1; then gtimeout "$secs" "$@"; return; fi
   "$@" &
   local pid=$!
-  ( sleep "$secs"; kill -TERM "$pid" 2>/dev/null; sleep 2; kill -KILL "$pid" 2>/dev/null ) &
+  (
+    exec </dev/null >/dev/null 2>&1 3>&-
+    sleep "$secs"
+    kill -TERM "$pid" 2>/dev/null
+    sleep 2
+    kill -KILL "$pid" 2>/dev/null
+  ) &
   local killer=$!
   local rc=0
   wait "$pid" 2>/dev/null || rc=$?
