@@ -28,6 +28,9 @@ gui/src-tauri/gen/
 # Playwright / debug artifacts
 .playwright-mcp/
 
+# Claude Code runtime state
+.claude/scheduled_tasks.lock
+
 # Debug screenshots (root-level, not the Tauri app icons)
 /claw-*.png
 /gui-*.png

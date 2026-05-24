@@ -1,15 +1,31 @@
 .DEFAULT_GOAL := help
-.PHONY: help install dev frontend build build-windows test typecheck clean
+.PHONY: help install dev frontend build build-mac build-linux build-windows build-all test typecheck clean
 
 REPO_ROOT := $(abspath $(dir $(firstword $(MAKEFILE_LIST))))
 export INSTALLER_REPO_DIR ?= $(REPO_ROOT)/shell
 
-# Windows distribution paths. The Tauri build emits claw-gui.exe under
-# target/<triple>/release/ and (via tauri-build) copies the shell/ tree
+# Distribution paths.
+DIST_DIR        := $(REPO_ROOT)/dist
+
+# macOS — universal-apple-darwin bundle (arm64 + x86_64 in one .app/.dmg).
+MAC_TARGET_DIR  := $(REPO_ROOT)/gui/src-tauri/target/universal-apple-darwin/release/bundle
+MAC_DIST_DIR    := $(DIST_DIR)/macos
+
+# Linux — Dockerized build emits .deb + .AppImage into $(LINUX_DIST_DIR).
+# LINUX_PLATFORM picks the container arch: defaults to the host's native arch
+# (arm64 on Apple Silicon, amd64 on Intel/AMD). Override to cross-build via
+# qemu, e.g.: `make build-linux LINUX_PLATFORM=linux/amd64` (slow: ~2-3 h on
+# Apple Silicon for a full Rust compile).
+LINUX_DOCKER_IMG := claw-installer-linux-builder
+LINUX_DIST_DIR   := $(DIST_DIR)/linux
+LINUX_PLATFORM   ?=
+
+# Windows — cross-compiled via cargo-xwin. The Tauri build emits claw-gui.exe
+# under target/<triple>/release/ and (via tauri-build) copies the shell/ tree
 # alongside it. We then stage a tidy directory and zip them together so the
 # customer gets one artifact to extract.
 WIN_TARGET_DIR  := $(REPO_ROOT)/gui/src-tauri/target/x86_64-pc-windows-msvc/release
-WIN_DIST_DIR    := $(REPO_ROOT)/dist/windows
+WIN_DIST_DIR    := $(DIST_DIR)/windows
 WIN_STAGE_DIR   := $(WIN_DIST_DIR)/claw-installer
 WIN_ZIP         := $(WIN_DIST_DIR)/claw-installer-windows.zip
 
@@ -27,6 +43,56 @@ frontend: install ## Start only the Vite dev server (browser stub mode, no Rust)
 
 build: install ## Produce a production bundle for the current platform
 	pnpm --filter ./gui tauri build
+
+build-mac: install ## Build universal macOS bundle (arm64 + x86_64) → dist/macos/
+	@uname -s | grep -q Darwin || { echo "!! build-mac must run on macOS"; exit 1; }
+	@rustup target list --installed | grep -q x86_64-apple-darwin || rustup target add x86_64-apple-darwin
+	@rustup target list --installed | grep -q aarch64-apple-darwin || rustup target add aarch64-apple-darwin
+	pnpm --filter ./gui tauri build --target universal-apple-darwin
+	@echo "==> staging macOS distribution"
+	@rm -rf "$(MAC_DIST_DIR)"
+	@mkdir -p "$(MAC_DIST_DIR)"
+	@# .app bundle (copied as-is, preserving symlinks via cp -R)
+	@if [ -d "$(MAC_TARGET_DIR)/macos" ]; then \
+	   cp -R "$(MAC_TARGET_DIR)/macos/"*.app "$(MAC_DIST_DIR)/" 2>/dev/null || true; \
+	 fi
+	@# .dmg installer
+	@if [ -d "$(MAC_TARGET_DIR)/dmg" ]; then \
+	   cp "$(MAC_TARGET_DIR)/dmg/"*.dmg "$(MAC_DIST_DIR)/" 2>/dev/null || true; \
+	 fi
+	@echo ""
+	@echo "✓ Built: $(MAC_DIST_DIR)/"
+	@ls -lh "$(MAC_DIST_DIR)/"
+
+build-linux: ## Build Linux .deb + .AppImage inside Docker → dist/linux/ (set LINUX_PLATFORM=linux/amd64 to cross-build)
+	@command -v docker >/dev/null || { echo "!! docker not found — install Docker Desktop or set PATH"; exit 1; }
+	@docker version --format '{{.Server.Version}}' >/dev/null 2>&1 || { echo "!! docker daemon not running"; exit 1; }
+	@if [ -n "$(LINUX_PLATFORM)" ]; then \
+	   echo "==> building linux builder image (platform=$(LINUX_PLATFORM))"; \
+	   docker build --platform $(LINUX_PLATFORM) -t $(LINUX_DOCKER_IMG) tools/build-linux; \
+	 else \
+	   echo "==> building linux builder image (native arch)"; \
+	   docker build -t $(LINUX_DOCKER_IMG) tools/build-linux; \
+	 fi
+	@mkdir -p "$(LINUX_DIST_DIR)"
+	@rm -f "$(LINUX_DIST_DIR)"/*.deb "$(LINUX_DIST_DIR)"/*.AppImage "$(LINUX_DIST_DIR)"/*.rpm 2>/dev/null || true
+	@echo "==> running tauri build inside container"
+	@if [ -n "$(LINUX_PLATFORM)" ]; then \
+	   docker run --rm --platform $(LINUX_PLATFORM) \
+	     -v "$(REPO_ROOT)":/src:ro \
+	     -v "$(LINUX_DIST_DIR)":/out \
+	     $(LINUX_DOCKER_IMG) \
+	     bash /src/tools/build-linux/run-build.sh; \
+	 else \
+	   docker run --rm \
+	     -v "$(REPO_ROOT)":/src:ro \
+	     -v "$(LINUX_DIST_DIR)":/out \
+	     $(LINUX_DOCKER_IMG) \
+	     bash /src/tools/build-linux/run-build.sh; \
+	 fi
+	@echo ""
+	@echo "✓ Built: $(LINUX_DIST_DIR)/"
+	@ls -lh "$(LINUX_DIST_DIR)/"
 
 build-windows: install ## Cross-compile Windows .exe and zip with shell/ for distribution
 	@command -v cargo-xwin >/dev/null || { echo "cargo-xwin not found. Run: cargo install cargo-xwin"; exit 1; }
@@ -51,6 +117,11 @@ build-windows: install ## Cross-compile Windows .exe and zip with shell/ for dis
 	@echo ""
 	@echo "✓ Built: $(WIN_ZIP)"
 	@echo "  Customer instructions: unzip → open the claw-installer folder → double-click claw-installer.exe"
+
+build-all: build-mac build-linux build-windows ## Build mac + linux + windows in sequence
+	@echo ""
+	@echo "✓ All platforms built. Artifacts under: $(DIST_DIR)/"
+	@find "$(DIST_DIR)" -maxdepth 2 -type f \( -name '*.dmg' -o -name '*.deb' -o -name '*.AppImage' -o -name '*.zip' \) -exec ls -lh {} +
 
 test: ## Run frontend + Rust test suites
 	pnpm --filter ./gui test
