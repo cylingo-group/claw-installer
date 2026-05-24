@@ -1,6 +1,8 @@
 # Claw Installer
 
-> Developed by **心言集团 (Cylingo Group)** — the team behind
+**English** · [简体中文](./README.zh-CN.md)
+
+> Built by **Cylingo Group** — the team behind
 > [**BubboLink**](https://bubbolink.com), our IM-side gateway that lets a
 > single chat thread orchestrate OpenClaw, Hermes, Claude Code, Codex and
 > other agents at once. Once `bubbolink pair` runs (one click inside this
@@ -18,16 +20,16 @@ so the same flow runs whether you double-click the app or invoke
 | Component | What it does |
 | --- | --- |
 | **OpenClaw** | The open-source agent runtime that powers chat-driven workflows. The installer pins Node, pnpm and the gateway daemon, then provisions its workspace under `~/.openclaw/`. |
-| **Hermes** | Cylingo's hosted-model bridge — gives every agent on the host a unified provider config (心元 / DeepSeek / MiniMax / custom OpenAI-compatible). |
+| **Hermes** | Cylingo's hosted-model bridge — gives every agent on the host a unified provider config (Xinyuan / DeepSeek / MiniMax / custom OpenAI-compatible). |
 | **BubboLink pairing** | After install, paste the 4-digit code from the **BubboLink** mobile app and we'll `bubbolink pair` against every runtime on this machine. |
-| **Channel docs** | Quick-links to OpenClaw's WeChat / 飞书 / 钉钉 integration guides — opens in your browser, no GUI config needed. |
+| **Channel docs** | Quick-links to OpenClaw's WeChat / Feishu / DingTalk integration guides — opens in your browser, no GUI config needed. |
 
 ## Quick start (end users)
 
 ### macOS
 
 1. Download `Claw-Installer-<version>-universal.dmg` from the
-   [latest release](https://github.com/cylingo/claw-installer/releases/latest)
+   [latest release](https://github.com/cylingo-group/claw-installer/releases/latest)
    (or your internal distribution channel).
 2. Open the DMG and drag **Claw Installer** to `/Applications`.
 3. Launch it. The window will guide you through agent selection → install →
@@ -96,6 +98,10 @@ make dev              # Tauri dev mode (recommended — live reload + Rust)
 make frontend         # browser stub mode (no Rust, no agent IPC)
 ```
 
+## License
+
+Apache License 2.0 — see [LICENSE](./LICENSE).
+
 ---
 
 ## Architecture (for contributors)
@@ -107,7 +113,7 @@ Designed to be driven either from a shell or from a GUI front-end — the GUI
 sets `INSTALLER_*` env vars and spawns the same entry points end-users
 invoke directly.
 
-## Layout
+### Layout
 
 ```
 shell/                            CLI implementation: install + lifecycle + uninstall
@@ -137,7 +143,7 @@ shell/                            CLI implementation: install + lifecycle + unin
 gui/                              Tauri-based GUI (drives the shell/ scripts)
 ```
 
-## Entry points
+### Entry points
 
 | Platform        | Command                                                                       |
 | --------------- | ----------------------------------------------------------------------------- |
@@ -150,39 +156,40 @@ gui/                              Tauri-based GUI (drives the shell/ scripts)
 | Uninstall (one) | `./shell/agents/<agent>/uninstall.sh`                                         |
 | Docker smoke    | `cd shell/docker && docker compose up --build`                                |
 
-## Install state
+### Install state
 
 Everything we change lands in **`~/.claw-installer/`** (overridable via
 `CLAW_STATE_DIR`):
 
 - `manifest.tsv` — structured record of every side effect; first-write wins
 
-Session logs land in **`$TMPDIR/claw-installer/`**:
+Session logs land in **`$TMPDIR/claw-installer/logs/`**:
 
 - `install-<UTC-unix-ts>.log` — full forensic record of an install run
 - `uninstall-<UTC-unix-ts>.log` — full forensic record of an uninstall run
 
 When spawned by Rust, the log path is passed as `CLAW_SESSION_LOG` via the
 child process environment. When invoked directly from the terminal without
-Rust, scripts auto-generate a fallback path under `$TMPDIR/claw-installer/cli-<ts>.log`.
+Rust, scripts auto-generate a fallback path under `$TMPDIR/claw-installer/logs/cli-<ts>.log`.
 
 `uninstall.sh` reads the manifest and reverses each row in insertion order.
 Status `preexisting` rows are skipped (we don't remove what we didn't install).
 
-## GUI ↔ installer contract
+### GUI ↔ installer contract
 
-### Two-stream logging
+#### Two-stream logging
 
 Scripts author every user-visible string explicitly using three primitives:
 
-- **`display "中文描述…"`** — writes to stdout (user sees it) AND to the session
-  log file. Every line the 5-line log strip shows comes from `display`.
+- **`display "human-readable description"`** — writes to stdout (user sees it)
+  AND to the session log file. Every line the 5-line log strip shows comes
+  from `display`.
 - **`log "technical detail"`** — writes to the session log file ONLY. Never
   appears on the user's terminal.
 - **`run <cmd> [args…]`** — logs `+ <cmd>`, executes the command with both stdout
   and stderr going to the session log file, and returns the command's exit code.
 
-### Step sentinel protocol
+#### Step sentinel protocol
 
 When a step starts, the script emits:
 
@@ -190,34 +197,35 @@ When a step starts, the script emits:
 @@step:<key>:<label>
 ```
 
-via `display "@@step:node:正在配置 Node 22 运行时"`. Rust parses this with the
-regex `^@@step:([a-z][a-z0-9-]*):(.+)$` and emits `InstallerEvent::StepChanged {
-key, label, detail: "" }`. The line is **not** forwarded as `LogLine`.
+via `display "@@step:node:Configuring Node 22 runtime"`. Rust parses this with
+the regex `^@@step:([a-z][a-z0-9-]*):(.+)$` and emits
+`InstallerEvent::StepChanged { key, label, detail: "" }`. The line is **not**
+forwarded as `LogLine`.
 
 All other stdout lines are forwarded verbatim as `LogLine` events. Rust does
 **no filtering, no ANSI stripping, no translation** — scripts are the sole
 authors of what the user sees.
 
-### Failure output
+#### Failure output
 
 On a step failure the scripts emit this 3-line block on stdout (so Rust
 forwards it as `LogLine` events for the GUI to surface):
 
 ```
-✗ 失败步骤：<current step Chinese label>
-✗ 失败原因：<command + exit code>
-✗ 详见完整日志：<absolute CLAW_SESSION_LOG path>
+✗ Failed step:   <current step label>
+✗ Cause:         <command + exit code>
+✗ See full log:  <absolute CLAW_SESSION_LOG path>
 ```
 
-### CLAW_SESSION_LOG env var
+#### CLAW_SESSION_LOG env var
 
-Rust pre-creates `$TMPDIR/claw-installer/<install|uninstall>-<ts>.log`, then
-passes `CLAW_SESSION_LOG=<path>` to the child process. Scripts open `fd 3`
-appending to this file when `common.sh` is sourced. Child agent scripts
-(`agents/<agent>/install.sh`) inherit `CLAW_SESSION_LOG` from the parent
-`install.sh` and append to the same file.
+Rust pre-creates `$TMPDIR/claw-installer/logs/<install|uninstall>-<ts>.log`,
+then passes `CLAW_SESSION_LOG=<path>` to the child process. Scripts open
+`fd 3` appending to this file when `common.sh` is sourced. Child agent
+scripts (`agents/<agent>/install.sh`) inherit `CLAW_SESSION_LOG` from the
+parent `install.sh` and append to the same file.
 
-### Debug mode
+#### Debug mode
 
 Pass `--debug` to any entry-point script to tail the session log to stderr in
 real time:
@@ -229,7 +237,7 @@ real time:
 This starts `tail -F "$CLAW_SESSION_LOG" >&2 &` in the background and kills it
 on EXIT. Useful for CLI triage when you want to see the full forensic output.
 
-### INSTALLER_* env vars
+#### INSTALLER_* env vars
 
 The GUI configures behavior via `INSTALLER_*` environment variables and spawns
 one of the entry points above. See each `agents/<agent>/install.sh` header for
@@ -247,7 +255,7 @@ the full list of supported variables.
 | `INSTALLER_WSL_DISTRO`             | (Windows) override WSL distro (default: Ubuntu)           |
 | `INSTALLER_REPO_DIR`               | Override path to the `shell/` checkout (used by the Rust backend in dev mode) |
 
-## Re-runs are idempotent
+### Re-runs are idempotent
 
 Re-running `install.sh` on a host that's already set up is fast and safe:
 each step probes for existing state before doing work.
