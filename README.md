@@ -1,78 +1,277 @@
+<!-- TODO: hero banner / logo SVG goes here once we have one -->
+
 # Claw Installer
 
 **English** · [简体中文](./README.zh-CN.md)
 
-> Built by **Cylingo Group** — the team behind
-> [**BubboLink**](https://bubbolink.com), our IM-side gateway that lets a
-> single chat thread orchestrate OpenClaw, Hermes, Claude Code, Codex and
-> other agents at once. Once `bubbolink pair` runs (one click inside this
-> installer), every agent you've installed on this machine becomes
-> reachable from BubboLink.
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](./LICENSE)
+[![Latest release](https://img.shields.io/github/v/release/cylingo-group/claw-installer)](https://github.com/cylingo-group/claw-installer/releases/latest)
+[![Platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey)](#download)
 
-A one-click installer for the **OpenClaw** and **Hermes** AI agents on a
-fresh host. Supports macOS, Linux, WSL 2 and Windows (via WSL). Ships as a
-small Tauri desktop GUI that drives a battle-tested set of shell scripts —
-so the same flow runs whether you double-click the app or invoke
-`./shell/install.sh` from a terminal.
+**Set up your AI agents in 5 minutes, on any OS.**
 
-## What's inside
+Claw Installer is a one-click desktop installer that gets a fresh laptop from
+zero to a working **OpenClaw** + **Hermes** setup — no terminal, no manual
+toolchain wrangling. Pick the agents you want, click install, and we'll take
+care of Node, pnpm, uv, Python, and everything else they depend on. The same
+flow works whether you're on macOS, Linux, or Windows (via WSL 2).
 
-| Component | What it does |
-| --- | --- |
-| **OpenClaw** | The open-source agent runtime that powers chat-driven workflows. The installer pins Node, pnpm and the gateway daemon, then provisions its workspace under `~/.openclaw/`. |
-| **Hermes** | Cylingo's hosted-model bridge — gives every agent on the host a unified provider config (Xinyuan / DeepSeek / MiniMax / custom OpenAI-compatible). |
-| **BubboLink pairing** | After install, paste the 4-digit code from the **BubboLink** mobile app and we'll `bubbolink pair` against every runtime on this machine. |
-| **Channel docs** | Quick-links to OpenClaw's WeChat / Feishu / DingTalk integration guides — opens in your browser, no GUI config needed. |
+<!-- TODO: hero GIF or screenshot of the installer running (1100×620, ≤ 4 MB) -->
 
-## Quick start (end users)
+> Made by **Cylingo Group** — also the team behind [**BubboLink**](https://bubbolink.com),
+> an IM-side gateway that lets a single chat thread drive every agent on your
+> machine. Pair it once from inside this installer and you're done.
 
-### macOS
+## Download
 
-1. Download `Claw-Installer-<version>-universal.dmg` from the
-   [latest release](https://github.com/cylingo-group/claw-installer/releases/latest)
-   (or your internal distribution channel).
-2. Open the DMG and drag **Claw Installer** to `/Applications`.
-3. Launch it. The window will guide you through agent selection → install →
-   pairing.
+Pick your platform and grab the latest build from the
+[releases page](https://github.com/cylingo-group/claw-installer/releases/latest).
 
-### Windows 10 / 11
+| Platform | Recommended | Also available |
+| --- | --- | --- |
+| **macOS** (11 +, Apple Silicon & Intel) | `Claw-Installer-<version>-universal.dmg` | — |
+| **Windows** 10 / 11 | `claw-installer-windows.zip` | — |
+| **Linux** (Ubuntu / Debian) | `Claw-Installer-<version>-amd64.deb` | `Claw-Installer-<version>-x86_64.AppImage` |
 
-1. Download `claw-installer-windows.zip` and unzip anywhere.
-2. Open the `claw-installer` folder and double-click `claw-installer.exe`.
-3. On first run we'll prompt for UAC to provision WSL 2 + Ubuntu — let it
-   reboot if asked, then re-launch the installer.
+**macOS** — open the DMG and drag **Claw Installer** to `/Applications`,
+then launch it.
 
-### Linux (Ubuntu / Debian)
+**Windows** — unzip and double-click `claw-installer.exe`. On first run
+Windows will ask permission to install WSL 2 + Ubuntu; allow it, reboot if
+prompted, and re-launch.
+
+**Linux**
 
 ```bash
 sudo apt install ./Claw-Installer-<version>-amd64.deb
-# or
+# or, for the portable build:
 chmod +x Claw-Installer-<version>-x86_64.AppImage
 ./Claw-Installer-<version>-x86_64.AppImage
 ```
 
-### Headless / scripted
-
-Skip the GUI and run the shell pipeline directly:
+Prefer the terminal? Skip the GUI entirely:
 
 ```bash
-git clone <repo> && cd claw-installer
-./shell/install.sh                            # both agents
-./shell/agents/openclaw/install.sh            # just OpenClaw
-INSTALLER_AGENTS=hermes ./shell/install.sh    # via env var
+git clone https://github.com/cylingo-group/claw-installer.git
+cd claw-installer
+./shell/install.sh                          # both agents
+INSTALLER_AGENTS=openclaw ./shell/install.sh   # just one
 ```
 
-## Building from source
+## Screenshots
 
-We ship one-command builds for all three desktop targets. Prerequisites:
+<table>
+  <tr>
+    <td width="50%" align="center">
+      <img src="./docs/images/readme/01.jpeg" width="280" alt="Agent picker"><br>
+      <sub><em>Pick which agents you want — install one or all at once.</em></sub>
+    </td>
+    <td width="50%" align="center">
+      <img src="./docs/images/readme/02.jpeg" width="280" alt="Install in progress"><br>
+      <sub><em>Watch the install in real time, with a live log strip.</em></sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center">
+      <img src="./docs/images/readme/03.jpeg" width="280" alt="Settings"><br>
+      <sub><em>Switch the install mirror and UI language any time from Settings.</em></sub>
+    </td>
+    <td width="50%" align="center">
+      <img src="./docs/images/readme/04.jpeg" width="280" alt="Model configuration"><br>
+      <sub><em>Configure your model provider — BubboHub (free for new users), DeepSeek, Kimi, MiniMax, or any OpenAI-compatible endpoint.</em></sub>
+    </td>
+  </tr>
+  <tr>
+    <td colspan="2" align="center">
+      <img src="./docs/images/readme/05.jpeg" width="280" alt="Channel configuration"><br>
+      <sub><em>Pair with BubboLink in one paste, or jump straight to the WeChat / Feishu / DingTalk integration docs.</em></sub>
+    </td>
+  </tr>
+</table>
 
-- [pnpm](https://pnpm.io) ≥ 9 (the workspace uses pnpm)
+## What you get
+
+| Component | What it does for you |
+| --- | --- |
+| **OpenClaw** | An open-source agent runtime that powers chat-driven workflows. Its workspace lives under `~/.openclaw/`. |
+| **Hermes** | Cylingo's hosted-model bridge. Gives every agent on the machine a unified provider config (BubboHub / DeepSeek / MiniMax / any OpenAI-compatible endpoint). |
+| **BubboLink pairing** | One paste of the 4-digit code from the BubboLink mobile app links every installed agent to your phone. |
+| **Channel docs** | One-click shortcuts to OpenClaw's WeChat / Feishu / DingTalk integration guides — opens in your browser, no extra config. |
+
+Under the hood we also pin the runtimes the agents need: **Node** (via
+[`fnm`](https://github.com/Schniz/fnm)), **pnpm** (via Corepack), **uv** and
+**Python 3.11**, plus a few system utilities (`curl`, `git`, `ripgrep`,
+`ffmpeg`, build essentials). If you already have them, we leave yours alone
+(see [Privacy](#privacy--what-it-does-to-your-system) below).
+
+## Why claw-installer
+
+Without an installer, getting OpenClaw and Hermes both running on a fresh
+machine looks like this:
+
+1. Clone two separate repositories
+2. Install Node, pnpm, uv, Python 3.11, Rust, Playwright…
+3. Configure PATH in `~/.bashrc` / `~/.zshrc`
+4. Read three setup docs to figure out the right env vars
+5. Spawn each gateway as a system service
+6. Hope nothing collides with what's already on your machine
+
+With Claw Installer it looks like this:
+
+1. Download, click, and wait a few minutes
+
+Other nice things:
+
+- **Idempotent.** Re-running on a half-set-up machine is safe and fast — every
+  step probes the current state before doing work.
+- **Reversible.** Every side effect is recorded; `./shell/uninstall.sh` undoes
+  exactly what we installed and leaves anything you already had alone.
+- **GUI + CLI parity.** The desktop app and `./shell/install.sh` run the
+  exact same pipeline, so a teammate can repro the same install in CI or over
+  SSH.
+- **Network-friendly.** Defaults to mainland-China mirrors (npmmirror, Gitee)
+  so first-time installs don't stall behind a slow registry.
+
+## System requirements
+
+| OS | Version | Disk | Notes |
+| --- | --- | --- | --- |
+| **macOS** | 11 Big Sur or newer | ~3 GB free | Apple Silicon & Intel both supported |
+| **Windows** | 10 (1903+) / 11 | ~5 GB free | Requires WSL 2 (installer sets it up on first run) |
+| **Linux** | Ubuntu 20.04+ / Debian 11+ | ~3 GB free | Other distros likely work; only Ubuntu/Debian are smoke-tested |
+
+A working internet connection is required during install. Subsequent runs of
+the installed agents work offline (apart from the model API calls those
+agents themselves make).
+
+## Privacy & what it does to your system
+
+We think you should know exactly what an installer does before you double-click
+it. Here is everything Claw Installer touches:
+
+**Files it writes**
+
+- `~/.openclaw/` — OpenClaw workspace and config (`openclaw.json`,
+  containing your gateway port and a randomly-generated 32-byte auth token)
+- `~/.hermes/` — Hermes data directory, including a shallow clone of
+  `hermes-agent` under `~/.hermes/hermes-agent/`
+- `~/.local/bin/hermes` — Hermes CLI shim
+- `~/.npmrc` — a managed block (marked with sentinels) that points npm/pnpm
+  at `registry.npmmirror.com`. Your other `.npmrc` settings are left alone.
+- `~/.bashrc` / `~/.zshrc` — a managed block adding `fnm` and the relevant
+  binaries to `PATH`. Marked with sentinels so it can be removed cleanly.
+- `~/.claw-installer/manifest.tsv` — a tab-separated record of every change
+  we made (used by the uninstaller)
+
+**Programs it downloads**
+
+- OpenClaw from `registry.npmmirror.com` (npm mirror — overridable via
+  `INSTALLER_NPM_REGISTRY`)
+- Hermes from `https://gitee.com/cylingo-group/hermes-agent` (shallow HTTPS
+  clone)
+- `fnm`, Node, Python 3.11, and `uv` from their official upstream channels
+  (GitHub Releases / `astral.sh`)
+- Optionally Playwright + Chromium (skip with `INSTALLER_HERMES_SKIP_BROWSER=1`)
+
+**Background services it registers**
+
+- A user-level launchd (macOS) / systemd (Linux) service for the OpenClaw
+  gateway, listening on `127.0.0.1:18789` by default (loopback only —
+  not exposed to your network)
+- A launchd / systemd unit definition for Hermes (registered but not started;
+  you start it from the GUI after configuring credentials)
+
+**What it does NOT do**
+
+- No telemetry. The installer does not phone home, does not record analytics,
+  does not send any data about you, your machine, or your usage anywhere.
+  The only outbound traffic is the package downloads listed above.
+- No root / admin install paths. Everything lives under your home directory;
+  `sudo` is only requested on Linux for the one `apt install` step that
+  pulls in system utilities, and only if those utilities are missing.
+- No silent updates. Re-running the installer is the only way new versions
+  land on your machine.
+
+**Removing it cleanly**
+
+```bash
+./shell/uninstall.sh             # reverses what we installed; --dry-run to preview
+./shell/agents/openclaw/uninstall.sh    # or remove a single agent
+```
+
+The uninstaller reads `~/.claw-installer/manifest.tsv` and skips anything
+marked `preexisting` — i.e. it won't remove a directory or package you
+already had.
+
+## FAQ
+
+**Will it touch my existing Node or Python installs?**
+No. We install Node via `fnm` into its own user-level prefix and Python 3.11
+via `uv` — neither modifies your system Node or Python. If `fnm` / `uv` are
+already on your `PATH`, we reuse them.
+
+**Do I need to run it as root / `sudo`?**
+On macOS and Windows, no. On Linux we'll prompt for `sudo` once if system
+utilities (`curl`, `git`, `ripgrep`, `ffmpeg`, `build-essential`) are
+missing — that's the only privileged step.
+
+**Why does Windows need WSL?**
+OpenClaw and Hermes are built and tested against POSIX environments.
+Running them inside WSL 2 keeps Windows users on the same code path as
+Linux users, which means fewer Windows-specific surprises. The installer
+sets up WSL 2 + Ubuntu on first run if you don't have it.
+
+**Can I uninstall it cleanly?**
+Yes. `./shell/uninstall.sh` reverses every change recorded in the manifest
+and leaves preexisting files / packages alone. Run with `--dry-run` first
+to see what it would do.
+
+**Does it auto-update?**
+No. Re-launch the latest installer (or re-run `./shell/install.sh`) when you
+want to update. Re-runs are idempotent — already-installed components are
+detected and skipped.
+
+**What if I'm behind a corporate firewall or proxy?**
+The installer respects the standard `HTTP_PROXY` / `HTTPS_PROXY` /
+`NO_PROXY` env vars. If your network blocks npmmirror or Gitee, override
+them: `INSTALLER_NPM_REGISTRY=<your-mirror>` and
+`INSTALLER_HERMES_INSTALL_URL=<your-mirror>`.
+
+**Can I install just one of the two agents?**
+Yes. In the GUI, deselect the one you don't want. From the CLI:
+`INSTALLER_AGENTS=openclaw ./shell/install.sh` (or `hermes`).
+
+**Where does my OpenClaw gateway token live, and is it exposed to my LAN?**
+The 32-byte token is generated locally and stored in `~/.openclaw/openclaw.json`.
+The gateway binds to `127.0.0.1:18789` by default — loopback only, not
+reachable from your LAN. Override with `INSTALLER_GATEWAY_BIND`.
+
+## Need help?
+
+- **Found a bug or have a feature request?** [Open a GitHub issue](https://github.com/cylingo-group/claw-installer/issues) —
+  include your OS, the version of the installer, and the line on screen
+  when things went wrong.
+- **Looking for the product?** Visit [bubbolink.com](https://bubbolink.com).
+- **Want to chat with us?** <!-- TODO: Discord / Feishu / WeChat invite links -->
+
+## Built with
+
+[Tauri](https://tauri.app) (Rust + TypeScript) on the desktop side, plain
+Bash on the installer side. Apache-2.0 licensed and proudly built by
+[Cylingo Group](https://bubbolink.com).
+
+<details>
+<summary><strong>Build from source</strong> (for contributors)</summary>
+
+Prerequisites:
+
+- [pnpm](https://pnpm.io) ≥ 9
 - [Rust](https://rustup.rs) stable toolchain
-- For **macOS universal**: `rustup target add x86_64-apple-darwin`
+- For **macOS universal builds**: `rustup target add x86_64-apple-darwin`
 - For **Windows cross-compile**: `cargo install cargo-xwin`
-- For **Linux build (from macOS)**: Docker Desktop running
+- For **Linux builds from macOS**: a running Docker Desktop
 
-Then:
+Build:
 
 ```bash
 make build-mac        # universal .app + .dmg → dist/macos/
@@ -81,205 +280,31 @@ make build-windows    # claw-installer.exe + shell/ → dist/windows/*.zip
 make build-all        # all three, sequentially
 ```
 
-Artifacts land under `dist/<platform>/`.
+> `make build-linux` produces artifacts matching the Docker container's
+> native arch — arm64 on Apple Silicon hosts, amd64 on Intel hosts. To
+> cross-build, set `LINUX_PLATFORM=linux/amd64` (slow under qemu) or
+> `LINUX_PLATFORM=linux/arm64`.
 
-> **Note on Linux arch:** `make build-linux` produces artifacts matching the
-> container's native arch — arm64 on Apple Silicon hosts, amd64 on Intel
-> hosts. To cross-build, set `LINUX_PLATFORM`:
-> ```
-> make build-linux LINUX_PLATFORM=linux/amd64    # x86_64 Linux from arm64 mac (slow: ~2–3 h via qemu)
-> make build-linux LINUX_PLATFORM=linux/arm64    # arm64 Linux from x86_64 host
-> ```
-
-### Run during development
+Run during development:
 
 ```bash
-make dev              # Tauri dev mode (recommended — live reload + Rust)
-make frontend         # browser stub mode (no Rust, no agent IPC)
+make dev              # Tauri dev mode — live reload + Rust
+make frontend         # browser stub mode — no Rust, no agent IPC
 ```
+
+The installer's internals (shell-script layering, manifest format,
+GUI ↔ shell protocol, `INSTALLER_*` env vars, two-stream logging) are
+documented separately — see `docs/architecture.md` (TODO) or read
+`shell/install.sh` and `shell/lib/common.sh` as the source of truth.
+
+</details>
+
+## Contributing
+
+PRs welcome. For anything beyond a small fix, please open an issue first so
+we can talk through the approach. Architecture notes will land in
+`docs/architecture.md`.
 
 ## License
 
-Apache License 2.0 — see [LICENSE](./LICENSE).
-
----
-
-## Architecture (for contributors)
-
-The rest of this document describes the installer's internal contracts —
-useful if you're modifying the shell scripts or the Rust↔TS IPC layer.
-
-Designed to be driven either from a shell or from a GUI front-end — the GUI
-sets `INSTALLER_*` env vars and spawns the same entry points end-users
-invoke directly.
-
-### Layout
-
-```
-shell/                            CLI implementation: install + lifecycle + uninstall
-├─ install.sh                     top-level: env deps + every agent
-├─ uninstall.sh                   reverses what we installed, per the manifest
-│                                  (honors CLAW_UNINSTALL_AGENT for per-agent mode)
-├─ agents/                        per-agent lifecycle scripts
-│   ├─ openclaw/{install,start,stop,restart,uninstall}.sh
-│   └─ hermes/{install,start,stop,restart,uninstall}.sh
-├─ lib/                           shared helpers + manifest plumbing
-│   ├─ common.sh
-│   └─ manifest.sh
-├─ steps/                         fine-grained env primitives
-│   ├─ base-deps.sh               curl / git / openssl / unzip / ca-certificates
-│   ├─ fnm.sh                     fnm (Node version manager)
-│   ├─ node.sh                    Node via fnm
-│   ├─ pnpm.sh                    pnpm via corepack
-│   ├─ npmrc.sh                   ~/.npmrc mirror block
-│   └─ shell-rc.sh                ~/.bashrc / ~/.zshrc PATH persistence
-├─ vendor/fnm/                    vendored fnm installer (offline-friendly)
-├─ windows/bootstrap.ps1          Windows entry: WSL preflight → install.sh
-└─ docker/                        smoke-test infra (Ubuntu 24.04 in a box)
-    ├─ Dockerfile
-    ├─ docker-compose.yml
-    └─ docker-entrypoint.sh
-
-gui/                              Tauri-based GUI (drives the shell/ scripts)
-```
-
-### Entry points
-
-| Platform        | Command                                                                       |
-| --------------- | ----------------------------------------------------------------------------- |
-| macOS / Linux   | `./shell/install.sh`                                                          |
-| WSL 2           | `./shell/install.sh` (same as Linux)                                          |
-| Windows (1-click) | `powershell -ExecutionPolicy Bypass -File shell\windows\bootstrap.ps1`      |
-| Single agent    | `./shell/agents/openclaw/install.sh` or `./shell/agents/hermes/install.sh`    |
-| Lifecycle       | `./shell/agents/<agent>/{start,stop,restart}.sh`                              |
-| Uninstall (all) | `./shell/uninstall.sh` (add `--dry-run` to preview)                           |
-| Uninstall (one) | `./shell/agents/<agent>/uninstall.sh`                                         |
-| Docker smoke    | `cd shell/docker && docker compose up --build`                                |
-
-### Install state
-
-Everything we change lands in **`~/.claw-installer/`** (overridable via
-`CLAW_STATE_DIR`):
-
-- `manifest.tsv` — structured record of every side effect; first-write wins
-
-Session logs land in **`$TMPDIR/claw-installer/logs/`**:
-
-- `install-<UTC-unix-ts>.log` — full forensic record of an install run
-- `uninstall-<UTC-unix-ts>.log` — full forensic record of an uninstall run
-
-When spawned by Rust, the log path is passed as `CLAW_SESSION_LOG` via the
-child process environment. When invoked directly from the terminal without
-Rust, scripts auto-generate a fallback path under `$TMPDIR/claw-installer/logs/cli-<ts>.log`.
-
-`uninstall.sh` reads the manifest and reverses each row in insertion order.
-Status `preexisting` rows are skipped (we don't remove what we didn't install).
-
-### GUI ↔ installer contract
-
-#### Two-stream logging
-
-Scripts author every user-visible string explicitly using three primitives:
-
-- **`display "human-readable description"`** — writes to stdout (user sees it)
-  AND to the session log file. Every line the 5-line log strip shows comes
-  from `display`.
-- **`log "technical detail"`** — writes to the session log file ONLY. Never
-  appears on the user's terminal.
-- **`run <cmd> [args…]`** — logs `+ <cmd>`, executes the command with both stdout
-  and stderr going to the session log file, and returns the command's exit code.
-
-#### Step sentinel protocol
-
-When a step starts, the script emits:
-
-```
-@@step:<key>:<label>
-```
-
-via `display "@@step:node:Configuring Node 22 runtime"`. Rust parses this with
-the regex `^@@step:([a-z][a-z0-9-]*):(.+)$` and emits
-`InstallerEvent::StepChanged { key, label, detail: "" }`. The line is **not**
-forwarded as `LogLine`.
-
-All other stdout lines are forwarded verbatim as `LogLine` events. Rust does
-**no filtering, no ANSI stripping, no translation** — scripts are the sole
-authors of what the user sees.
-
-#### Failure output
-
-On a step failure the scripts emit this 3-line block on stdout (so Rust
-forwards it as `LogLine` events for the GUI to surface):
-
-```
-✗ Failed step:   <current step label>
-✗ Cause:         <command + exit code>
-✗ See full log:  <absolute CLAW_SESSION_LOG path>
-```
-
-#### CLAW_SESSION_LOG env var
-
-Rust pre-creates `$TMPDIR/claw-installer/logs/<install|uninstall>-<ts>.log`,
-then passes `CLAW_SESSION_LOG=<path>` to the child process. Scripts open
-`fd 3` appending to this file when `common.sh` is sourced. Child agent
-scripts (`agents/<agent>/install.sh`) inherit `CLAW_SESSION_LOG` from the
-parent `install.sh` and append to the same file.
-
-#### Debug mode
-
-Pass `--debug` to any entry-point script to tail the session log to stderr in
-real time:
-
-```bash
-./shell/install.sh --debug
-```
-
-This starts `tail -F "$CLAW_SESSION_LOG" >&2 &` in the background and kills it
-on EXIT. Useful for CLI triage when you want to see the full forensic output.
-
-#### INSTALLER_* env vars
-
-The GUI configures behavior via `INSTALLER_*` environment variables and spawns
-one of the entry points above. See each `agents/<agent>/install.sh` header for
-the full list of supported variables.
-
-| Variable                          | Effect                                                    |
-| --------------------------------- | --------------------------------------------------------- |
-| `INSTALLER_AGENTS=openclaw,hermes` | Subset of agents to install (default: both)              |
-| `INSTALLER_NPM_REGISTRY`           | npm/pnpm registry mirror                                  |
-| `INSTALLER_GATEWAY_*`              | openclaw gateway port / bind / token                      |
-| `INSTALLER_SERVICE_MODE`           | `daemon` / `foreground` / `skip`                          |
-| `INSTALLER_WORKSPACE`              | openclaw workspace dir                                    |
-| `INSTALLER_HERMES_SKIP_BROWSER=1`  | Skip Playwright/Chromium install                          |
-| `INSTALLER_FORCE_REINSTALL=1`      | Bypass all "already installed" fast-paths and redo everything |
-| `INSTALLER_WSL_DISTRO`             | (Windows) override WSL distro (default: Ubuntu)           |
-| `INSTALLER_REPO_DIR`               | Override path to the `shell/` checkout (used by the Rust backend in dev mode) |
-
-### Re-runs are idempotent
-
-Re-running `install.sh` on a host that's already set up is fast and safe:
-each step probes for existing state before doing work.
-
-- **System packages** (curl, git, ripgrep, ffmpeg, build chain): only missing
-  packages get installed; already-present ones are recorded as `preexisting`.
-- **fnm / Node / pnpm / uv / Python 3.11**: skipped when the requested
-  version is already installed and active.
-- **`~/.npmrc` and `~/.bashrc`/`~/.zshrc` managed blocks**: rewritten only if
-  the existing block content differs from the desired content.
-- **openclaw package**: skipped when `openclaw` is already on PATH.
-- **openclaw config**: existing gateway token is reused (never silently
-  rotated); individual `openclaw config set` calls are skipped when the
-  current value already matches.
-- **openclaw gateway service**: if `openclaw gateway status` reports the
-  daemon is running, the installer skips `gateway install`, `doctor --repair`,
-  and `gateway start` — no daemon restart on re-run.
-- **hermes**: skipped when `$HERMES_HOME/../hermes-agent` is already checked
-  out and `~/.local/bin/hermes` is executable.
-
-Set `INSTALLER_FORCE_REINSTALL=1` to bypass these fast-paths.
-
-Read manifest from Windows:
-
-```
-\\wsl.localhost\Ubuntu\home\<user>\.claw-installer\manifest.tsv
-```
+[Apache License 2.0](./LICENSE).
