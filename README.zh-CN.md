@@ -59,29 +59,25 @@ INSTALLER_AGENTS=openclaw ./shell/install.sh   # 只装其中一个
 
 <table>
   <tr>
-    <td width="50%" align="center">
-      <img src="./docs/images/readme/01.jpeg" width="280" alt="Agent 选择"><br>
+    <td width="20%" align="center">
+      <img src="./docs/images/readme/01.jpeg" width="170" alt="Agent 选择"><br>
       <sub><em>挑选要装的 Agent —— 单装或者一键全装。</em></sub>
     </td>
-    <td width="50%" align="center">
-      <img src="./docs/images/readme/02.jpeg" width="280" alt="安装进行中"><br>
+    <td width="20%" align="center">
+      <img src="./docs/images/readme/02.jpeg" width="170" alt="安装进行中"><br>
       <sub><em>安装进度一目了然，下方日志条实时同步。</em></sub>
     </td>
-  </tr>
-  <tr>
-    <td width="50%" align="center">
-      <img src="./docs/images/readme/03.jpeg" width="280" alt="应用设置"><br>
-      <sub><em>设置里随时切换安装源（官方 / 加速）和界面语言。</em></sub>
+    <td width="20%" align="center">
+      <img src="./docs/images/readme/03.jpeg" width="170" alt="应用设置"><br>
+      <sub><em>设置里随时切换安装源和界面语言。</em></sub>
     </td>
-    <td width="50%" align="center">
-      <img src="./docs/images/readme/04.jpeg" width="280" alt="模型配置"><br>
-      <sub><em>配置模型 Provider —— BubboHub（新用户免费用）、DeepSeek、Kimi、MiniMax，或任意 OpenAI 兼容接入。</em></sub>
+    <td width="20%" align="center">
+      <img src="./docs/images/readme/04.jpeg" width="170" alt="模型配置"><br>
+      <sub><em>挑选模型 Provider —— BubboHub、DeepSeek、Kimi、MiniMax，或任意 OpenAI 兼容接入。</em></sub>
     </td>
-  </tr>
-  <tr>
-    <td colspan="2" align="center">
-      <img src="./docs/images/readme/05.jpeg" width="280" alt="通道配置"><br>
-      <sub><em>一键配对 BubboLink，或者直接打开微信 / 飞书 / 钉钉接入文档。</em></sub>
+    <td width="20%" align="center">
+      <img src="./docs/images/readme/05.jpeg" width="170" alt="通道配置"><br>
+      <sub><em>一键配对 BubboLink，或打开微信 / 飞书 / 钉钉接入文档。</em></sub>
     </td>
   </tr>
 </table>

@@ -62,29 +62,25 @@ INSTALLER_AGENTS=openclaw ./shell/install.sh   # just one
 
 <table>
   <tr>
-    <td width="50%" align="center">
-      <img src="./docs/images/readme/01.jpeg" width="280" alt="Agent picker"><br>
-      <sub><em>Pick which agents you want — install one or all at once.</em></sub>
+    <td width="20%" align="center">
+      <img src="./docs/images/readme/01.jpeg" width="170" alt="Agent picker"><br>
+      <sub><em>Pick which agents you want — one or all at once.</em></sub>
     </td>
-    <td width="50%" align="center">
-      <img src="./docs/images/readme/02.jpeg" width="280" alt="Install in progress"><br>
+    <td width="20%" align="center">
+      <img src="./docs/images/readme/02.jpeg" width="170" alt="Install in progress"><br>
       <sub><em>Watch the install in real time, with a live log strip.</em></sub>
     </td>
-  </tr>
-  <tr>
-    <td width="50%" align="center">
-      <img src="./docs/images/readme/03.jpeg" width="280" alt="Settings"><br>
-      <sub><em>Switch the install mirror and UI language any time from Settings.</em></sub>
+    <td width="20%" align="center">
+      <img src="./docs/images/readme/03.jpeg" width="170" alt="Settings"><br>
+      <sub><em>Switch install mirror and UI language any time.</em></sub>
     </td>
-    <td width="50%" align="center">
-      <img src="./docs/images/readme/04.jpeg" width="280" alt="Model configuration"><br>
-      <sub><em>Configure your model provider — BubboHub (free for new users), DeepSeek, Kimi, MiniMax, or any OpenAI-compatible endpoint.</em></sub>
+    <td width="20%" align="center">
+      <img src="./docs/images/readme/04.jpeg" width="170" alt="Model configuration"><br>
+      <sub><em>Pick a model provider — BubboHub, DeepSeek, Kimi, MiniMax, or any OpenAI-compatible endpoint.</em></sub>
     </td>
-  </tr>
-  <tr>
-    <td colspan="2" align="center">
-      <img src="./docs/images/readme/05.jpeg" width="280" alt="Channel configuration"><br>
-      <sub><em>Pair with BubboLink in one paste, or jump straight to the WeChat / Feishu / DingTalk integration docs.</em></sub>
+    <td width="20%" align="center">
+      <img src="./docs/images/readme/05.jpeg" width="170" alt="Channel configuration"><br>
+      <sub><em>Pair with BubboLink, or open the WeChat / Feishu / DingTalk guides.</em></sub>
     </td>
   </tr>
 </table>
